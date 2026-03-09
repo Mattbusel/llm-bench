@@ -97,7 +97,7 @@ fn percentile_sorted(sorted: &[u64], p: usize) -> u64 {
     }
     let n = sorted.len();
     // nearest-rank index
-    let idx = ((p * n + 99) / 100).saturating_sub(1).min(n - 1);
+    let idx = (p * n).div_ceil(100).saturating_sub(1).min(n - 1);
     sorted[idx]
 }
 
