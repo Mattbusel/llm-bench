@@ -24,7 +24,7 @@ use tracing::{debug, instrument};
 use crate::error::BenchError;
 use crate::types::{BenchResult, ProviderConfig};
 
-//  Pricing tables (USD per 1 000 tokens) 
+//  Pricing tables (USD per 1 000 tokens)
 
 /// USD per 1 000 prompt tokens for each model.
 fn prompt_price_per_1k(model: &str) -> f64 {
@@ -61,7 +61,7 @@ pub fn compute_cost(model: &str, prompt_tokens: u32, completion_tokens: u32) -> 
     p + c
 }
 
-//  OpenAI wire types 
+//  OpenAI wire types
 
 #[derive(Serialize)]
 struct OpenAiRequest<'a> {
@@ -98,7 +98,7 @@ struct OpenAiUsage {
     completion_tokens: u32,
 }
 
-//  Anthropic wire types 
+//  Anthropic wire types
 
 #[derive(Serialize)]
 struct AnthropicRequest<'a> {
@@ -132,7 +132,7 @@ struct AnthropicUsage {
     output_tokens: u32,
 }
 
-//  OpenAI provider 
+//  OpenAI provider
 
 /// Issue one inference request to the OpenAI chat-completions endpoint.
 ///
@@ -243,7 +243,7 @@ pub async fn run_openai(
     })
 }
 
-//  Anthropic provider 
+//  Anthropic provider
 
 /// Issue one inference request to the Anthropic messages endpoint.
 ///
@@ -406,7 +406,7 @@ pub struct ModelInfo {
     pub completion_per_1k: f64,
 }
 
-//  Tests 
+//  Tests
 
 #[cfg(test)]
 mod tests {
@@ -414,7 +414,7 @@ mod tests {
     use wiremock::matchers::{header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
-    //  Cost calculation 
+    //  Cost calculation
 
     #[test]
     fn test_compute_cost_gpt4o_mini_known_values() {
@@ -485,7 +485,7 @@ mod tests {
         );
     }
 
-    //  Price tables 
+    //  Price tables
 
     #[test]
     fn test_prompt_price_per_1k_gpt4_turbo() {
@@ -499,26 +499,25 @@ mod tests {
 
     #[test]
     fn test_prompt_price_claude_sonnet() {
-        assert!(
-            (prompt_price_per_1k("claude-3-5-sonnet-20241022") - 0.003).abs() < 1e-9
-        );
+        assert!((prompt_price_per_1k("claude-3-5-sonnet-20241022") - 0.003).abs() < 1e-9);
     }
 
     #[test]
     fn test_completion_price_claude_sonnet() {
-        assert!(
-            (completion_price_per_1k("claude-3-5-sonnet-20241022") - 0.015).abs() < 1e-9
-        );
+        assert!((completion_price_per_1k("claude-3-5-sonnet-20241022") - 0.015).abs() < 1e-9);
     }
 
     #[test]
     fn test_prompt_price_latest_alias_equals_dated() {
         let dated = prompt_price_per_1k("claude-3-5-sonnet-20241022");
         let latest = prompt_price_per_1k("claude-3-5-sonnet-latest");
-        assert!((dated - latest).abs() < 1e-9, "aliases should have same price");
+        assert!(
+            (dated - latest).abs() < 1e-9,
+            "aliases should have same price"
+        );
     }
 
-    //  supported_models 
+    //  supported_models
 
     #[test]
     fn test_supported_models_non_empty() {
@@ -528,7 +527,11 @@ mod tests {
     #[test]
     fn test_supported_models_all_have_positive_prices() {
         for m in supported_models() {
-            assert!(m.prompt_per_1k > 0.0, "model {} has zero prompt price", m.model);
+            assert!(
+                m.prompt_per_1k > 0.0,
+                "model {} has zero prompt price",
+                m.model
+            );
             assert!(
                 m.completion_per_1k > 0.0,
                 "model {} has zero completion price",
@@ -550,9 +553,7 @@ mod tests {
 
     #[test]
     fn test_supported_models_contains_gpt4o_mini() {
-        let found = supported_models()
-            .iter()
-            .any(|m| m.model == "gpt-4o-mini");
+        let found = supported_models().iter().any(|m| m.model == "gpt-4o-mini");
         assert!(found, "gpt-4o-mini should be in supported models");
     }
 
@@ -564,7 +565,7 @@ mod tests {
         assert!(found, "haiku should be in supported models");
     }
 
-    //  OpenAI wire mock 
+    //  OpenAI wire mock
 
     fn openai_config(api_key: &str, model: &str) -> ProviderConfig {
         ProviderConfig {
@@ -711,7 +712,7 @@ mod tests {
         assert_eq!(result.unwrap_or_else(|_| unreachable!()).run_index, 7);
     }
 
-    //  Anthropic wire mock 
+    //  Anthropic wire mock
 
     #[tokio::test]
     async fn test_run_anthropic_success_parses_result() {
@@ -755,7 +756,10 @@ mod tests {
         let result = run_anthropic(&client, &config, &server.uri(), "hi", 0).await;
 
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), BenchError::ApiError { status: 401, .. }));
+        assert!(matches!(
+            result.unwrap_err(),
+            BenchError::ApiError { status: 401, .. }
+        ));
     }
 
     #[tokio::test]
@@ -773,7 +777,10 @@ mod tests {
         let result = run_anthropic(&client, &config, &server.uri(), "hi", 0).await;
 
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), BenchError::RateLimited { .. }));
+        assert!(matches!(
+            result.unwrap_err(),
+            BenchError::RateLimited { .. }
+        ));
     }
 
     #[tokio::test]

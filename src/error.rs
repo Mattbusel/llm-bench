@@ -52,13 +52,13 @@ pub enum BenchError {
     Concurrency { reason: String },
 }
 
-//  Tests 
+//  Tests
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    //  Display formatting 
+    //  Display formatting
 
     #[test]
     fn test_api_error_display_contains_provider_model_status() {
@@ -102,7 +102,10 @@ mod tests {
             reason: "API key is empty".into(),
         };
         let msg = err.to_string();
-        assert!(msg.contains("API key is empty"), "expected reason in: {msg}");
+        assert!(
+            msg.contains("API key is empty"),
+            "expected reason in: {msg}"
+        );
     }
 
     #[test]
@@ -110,7 +113,10 @@ mod tests {
         let io_err = std::io::Error::new(std::io::ErrorKind::NotFound, "file missing");
         let bench_err = BenchError::from(io_err);
         let msg = bench_err.to_string();
-        assert!(msg.contains("file missing"), "expected io message in: {msg}");
+        assert!(
+            msg.contains("file missing"),
+            "expected io message in: {msg}"
+        );
     }
 
     #[test]
@@ -128,10 +134,13 @@ mod tests {
             reason: "task join failed".into(),
         };
         let msg = err.to_string();
-        assert!(msg.contains("task join failed"), "expected reason in: {msg}");
+        assert!(
+            msg.contains("task join failed"),
+            "expected reason in: {msg}"
+        );
     }
 
-    //  Debug trait 
+    //  Debug trait
 
     #[test]
     fn test_all_variants_are_debug_printable() {
@@ -152,25 +161,15 @@ mod tests {
                     retry_after_secs: None
                 }
             ),
-            format!(
-                "{:?}",
-                BenchError::InvalidConfig {
-                    reason: "r".into()
-                }
-            ),
-            format!(
-                "{:?}",
-                BenchError::Concurrency {
-                    reason: "c".into()
-                }
-            ),
+            format!("{:?}", BenchError::InvalidConfig { reason: "r".into() }),
+            format!("{:?}", BenchError::Concurrency { reason: "c".into() }),
         ];
         for v in &variants {
             assert!(!v.is_empty(), "debug output should not be empty");
         }
     }
 
-    //  Source chain 
+    //  Source chain
 
     #[test]
     fn test_io_error_has_source() {

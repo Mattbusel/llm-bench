@@ -265,8 +265,7 @@ mod tests {
 
     #[test]
     fn test_resolve_model_bare_claude_autodetects_anthropic() {
-        let (provider, model) =
-            resolve_model("claude-3-5-haiku-20241022").unwrap_or(("", ""));
+        let (provider, model) = resolve_model("claude-3-5-haiku-20241022").unwrap_or(("", ""));
         assert_eq!(provider, "anthropic");
         assert_eq!(model, "claude-3-5-haiku-20241022");
     }
@@ -282,7 +281,10 @@ mod tests {
     fn test_resolve_model_unknown_returns_error() {
         let result = resolve_model("llama-3-70b");
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), BenchError::InvalidConfig { .. }));
+        assert!(matches!(
+            result.unwrap_err(),
+            BenchError::InvalidConfig { .. }
+        ));
     }
 
     #[test]
@@ -326,11 +328,7 @@ mod tests {
 
     #[test]
     fn test_build_config_anthropic_model_produces_anthropic_provider() {
-        let args = minimal_run_args(
-            "claude-3-5-haiku-20241022",
-            "anthropic",
-            "sk-ant-test",
-        );
+        let args = minimal_run_args("claude-3-5-haiku-20241022", "anthropic", "sk-ant-test");
         let config = build_config(&args);
         assert!(config.is_ok());
         let config = config.unwrap_or_else(|_| unreachable!());
@@ -367,7 +365,10 @@ mod tests {
         };
         let result = build_config(&args);
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), BenchError::InvalidConfig { .. }));
+        assert!(matches!(
+            result.unwrap_err(),
+            BenchError::InvalidConfig { .. }
+        ));
     }
 
     #[test]
@@ -386,7 +387,10 @@ mod tests {
         };
         let result = build_config(&args);
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), BenchError::InvalidConfig { .. }));
+        assert!(matches!(
+            result.unwrap_err(),
+            BenchError::InvalidConfig { .. }
+        ));
     }
 
     #[test]
@@ -430,10 +434,7 @@ mod tests {
         let args = RunArgs {
             openai_key: Some("sk-openai".into()),
             anthropic_key: Some("sk-ant".into()),
-            models: vec![
-                "gpt-4o-mini".into(),
-                "claude-3-5-haiku-20241022".into(),
-            ],
+            models: vec!["gpt-4o-mini".into(), "claude-3-5-haiku-20241022".into()],
             prompts: vec!["hello".into()],
             prompt_file: None,
             runs: 1,

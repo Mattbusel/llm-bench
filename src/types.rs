@@ -1,7 +1,7 @@
 //! # Module: Types
 //!
 //! ## Responsibility
-//! Core domain types shared across all modules.  These are plain data structs  - 
+//! Core domain types shared across all modules.  These are plain data structs  -
 //! no business logic lives here.
 //!
 //! ## Guarantees
@@ -10,7 +10,7 @@
 
 use serde::{Deserialize, Serialize};
 
-//  Individual run result 
+//  Individual run result
 
 /// The complete result of a single inference call against one model.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -50,7 +50,7 @@ pub struct BenchResult {
     pub run_index: u32,
 }
 
-//  Benchmark configuration 
+//  Benchmark configuration
 
 /// Top-level configuration for a benchmark run.
 #[derive(Debug, Clone)]
@@ -84,7 +84,7 @@ pub struct ProviderConfig {
     pub max_tokens: u32,
 }
 
-//  Aggregated summary 
+//  Aggregated summary
 
 /// Aggregated statistics across all runs for a provider+model pair.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -114,13 +114,13 @@ pub struct BenchSummary {
     pub success_rate: f64,
 }
 
-//  Tests 
+//  Tests
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    //  BenchResult 
+    //  BenchResult
 
     fn sample_result(provider: &str, model: &str, latency: u64, cost: f64) -> BenchResult {
         BenchResult {
@@ -186,7 +186,7 @@ mod tests {
         assert_eq!(r.tokens_per_second, 0.0);
     }
 
-    //  BenchConfig 
+    //  BenchConfig
 
     fn sample_config() -> BenchConfig {
         BenchConfig {
@@ -252,7 +252,7 @@ mod tests {
         assert_eq!(p.max_tokens, 1024);
     }
 
-    //  BenchSummary 
+    //  BenchSummary
 
     fn sample_summary() -> BenchSummary {
         BenchSummary {
@@ -299,7 +299,10 @@ mod tests {
         let s = sample_summary();
         let json = serde_json::to_string(&s).unwrap_or_default();
         assert!(json.contains("openai"), "JSON should contain provider");
-        assert!(json.contains("p50_latency_ms"), "JSON should contain field name");
+        assert!(
+            json.contains("p50_latency_ms"),
+            "JSON should contain field name"
+        );
     }
 
     #[test]
@@ -374,7 +377,10 @@ mod tests {
         // A JSON object with a missing required field should fail to deserialise
         let bad_json = r#"{"provider":"openai"}"#;
         let result: Result<BenchResult, _> = serde_json::from_str(bad_json);
-        assert!(result.is_err(), "incomplete JSON should fail to deserialise");
+        assert!(
+            result.is_err(),
+            "incomplete JSON should fail to deserialise"
+        );
     }
 
     #[test]
