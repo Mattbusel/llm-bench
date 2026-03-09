@@ -1,7 +1,7 @@
 //! # Module: Types
 //!
 //! ## Responsibility
-//! Core domain types shared across all modules.  These are plain data structs —
+//! Core domain types shared across all modules.  These are plain data structs  - 
 //! no business logic lives here.
 //!
 //! ## Guarantees
@@ -10,7 +10,7 @@
 
 use serde::{Deserialize, Serialize};
 
-// ─── Individual run result ────────────────────────────────────────────────────
+//  Individual run result 
 
 /// The complete result of a single inference call against one model.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -40,7 +40,7 @@ pub struct BenchResult {
     /// Estimated cost in USD for this request.
     pub cost_usd: f64,
 
-    /// `completion_tokens / (total_ms / 1000.0)` — tokens generated per second.
+    /// `completion_tokens / (total_ms / 1000.0)`  -  tokens generated per second.
     pub tokens_per_second: f64,
 
     /// The full text of the model's response.
@@ -50,7 +50,7 @@ pub struct BenchResult {
     pub run_index: u32,
 }
 
-// ─── Benchmark configuration ──────────────────────────────────────────────────
+//  Benchmark configuration 
 
 /// Top-level configuration for a benchmark run.
 #[derive(Debug, Clone)]
@@ -84,7 +84,7 @@ pub struct ProviderConfig {
     pub max_tokens: u32,
 }
 
-// ─── Aggregated summary ───────────────────────────────────────────────────────
+//  Aggregated summary 
 
 /// Aggregated statistics across all runs for a provider+model pair.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -110,17 +110,17 @@ pub struct BenchSummary {
     /// Sum of cost across all runs in USD.
     pub total_cost_usd: f64,
 
-    /// Fraction of runs that completed without error (0.0–1.0).
+    /// Fraction of runs that completed without error (0.0 - 1.0).
     pub success_rate: f64,
 }
 
-// ─── Tests ────────────────────────────────────────────────────────────────────
+//  Tests 
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    // ── BenchResult ───────────────────────────────────────────────────────────
+    //  BenchResult 
 
     fn sample_result(provider: &str, model: &str, latency: u64, cost: f64) -> BenchResult {
         BenchResult {
@@ -186,7 +186,7 @@ mod tests {
         assert_eq!(r.tokens_per_second, 0.0);
     }
 
-    // ── BenchConfig ───────────────────────────────────────────────────────────
+    //  BenchConfig 
 
     fn sample_config() -> BenchConfig {
         BenchConfig {
@@ -252,7 +252,7 @@ mod tests {
         assert_eq!(p.max_tokens, 1024);
     }
 
-    // ── BenchSummary ──────────────────────────────────────────────────────────
+    //  BenchSummary 
 
     fn sample_summary() -> BenchSummary {
         BenchSummary {

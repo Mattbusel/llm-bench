@@ -4,7 +4,7 @@
 name = "llm-bench"
 version = "0.1.0"
 edition = "2021"
-description = "Universal LLM provider benchmark CLI — compare OpenAI and Anthropic on latency, cost, quality, and throughput"
+description = "Universal LLM provider benchmark CLI  -  compare OpenAI and Anthropic on latency, cost, quality, and throughput"
 license = "MIT"
 keywords = ["llm", "benchmark", "openai", "anthropic", "cli"]
 categories = ["command-line-utilities", "development-tools"]
@@ -19,7 +19,7 @@ expect_used = "deny"
 panic = "deny"
 
 [dependencies]
-# tokio: async runtime — core dependency for concurrent benchmark runs
+# tokio: async runtime  -  core dependency for concurrent benchmark runs
 tokio = { version = "1.40", features = ["full"] }
 
 # reqwest: HTTP client for OpenAI and Anthropic API calls
@@ -29,7 +29,7 @@ reqwest = { version = "0.12", features = ["json"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 
-# thiserror: zero-cost typed error derive — replaces manual Display impls
+# thiserror: zero-cost typed error derive  -  replaces manual Display impls
 thiserror = "1.0"
 
 # clap: command-line argument parsing with derive macro

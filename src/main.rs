@@ -7,9 +7,9 @@
 //! configured models and renders results as a coloured ASCII table or JSON.
 //!
 //! ## Entry points
-//! - `llm-bench run`     — execute a benchmark
-//! - `llm-bench models`  — list supported models and pricing
-//! - `llm-bench version` — print version
+//! - `llm-bench run`      -  execute a benchmark
+//! - `llm-bench models`   -  list supported models and pricing
+//! - `llm-bench version`  -  print version
 
 #![deny(clippy::unwrap_used)]
 #![deny(clippy::expect_used)]
@@ -35,7 +35,7 @@ use error::BenchError;
 
 #[tokio::main]
 async fn main() {
-    // Initialise tracing — respects RUST_LOG env var
+    // Initialise tracing  -  respects RUST_LOG env var
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -85,7 +85,7 @@ async fn run_benchmark(args: cli::RunArgs) -> Result<(), BenchError> {
         total_tasks
     );
 
-    // ── Progress bar ──────────────────────────────────────────────────────────
+    //  Progress bar 
     let pb = ProgressBar::new(total_tasks as u64);
     pb.set_style(
         ProgressStyle::with_template(
@@ -100,15 +100,15 @@ async fn run_benchmark(args: cli::RunArgs) -> Result<(), BenchError> {
     let completed = Arc::new(AtomicUsize::new(0));
     let completed_cb = Arc::clone(&completed);
 
-    // ── Ctrl+C handler ────────────────────────────────────────────────────────
+    //  Ctrl+C handler 
     tokio::spawn(async move {
         if tokio::signal::ctrl_c().await.is_ok() {
-            eprintln!("\n{}", "Interrupted — partial results may have been collected.".yellow());
+            eprintln!("\n{}", "Interrupted  -  partial results may have been collected.".yellow());
             std::process::exit(130);
         }
     });
 
-    // ── Run benchmark ─────────────────────────────────────────────────────────
+    //  Run benchmark 
     let bench_runner = runner::BenchRunner::new()?;
 
     let results = bench_runner
@@ -135,7 +135,7 @@ async fn run_benchmark(args: cli::RunArgs) -> Result<(), BenchError> {
         }
     );
 
-    // ── Output ────────────────────────────────────────────────────────────────
+    //  Output 
     match args.output {
         OutputFormat::Table => {
             let summaries = report::generate_summary(&results);
@@ -147,7 +147,7 @@ async fn run_benchmark(args: cli::RunArgs) -> Result<(), BenchError> {
         }
     }
 
-    // ── Save to file ──────────────────────────────────────────────────────────
+    //  Save to file 
     if let Some(ref path) = args.output_file {
         let json = report::print_results_json(&results)?;
         std::fs::write(path, &json).map_err(BenchError::Io)?;

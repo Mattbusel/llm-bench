@@ -6,7 +6,7 @@
 [![Tests](https://img.shields.io/badge/tests-126%20passing-brightgreen.svg)](#)
 
 **Universal LLM provider benchmark CLI.**
-Compare OpenAI and Anthropic models side-by-side on latency (p50/p99), cost per request, and token throughput — all from a single command.
+Compare OpenAI and Anthropic models side-by-side on latency (p50/p99), cost per request, and token throughput  -  all from a single command.
 
 ---
 
@@ -57,7 +57,7 @@ llm-bench run \
 
 ```
 → Benchmarking 2 model(s) × 2 prompt(s) × 3 run(s) = 12 total requests
-⠙ [00:00:08] [========================================] 12/12 (0s)
+ [00:00:08] [========================================] 12/12 (0s)
 
 Results: 12 succeeded, 0 failed (100% success rate)
 
@@ -80,12 +80,12 @@ Results: 12 succeeded, 0 failed (100% success rate)
 | `--openai-key <KEY>` | `$OPENAI_API_KEY` | OpenAI API key |
 | `--anthropic-key <KEY>` | `$ANTHROPIC_API_KEY` | Anthropic API key |
 | `--models <MODEL,...>` | `gpt-4o-mini,claude-3-5-haiku-20241022` | Comma-separated model IDs. Prefix with `openai:` or `anthropic:` to disambiguate, or use bare names for known models |
-| `--prompts <PROMPT,...>` | — | Inline prompts (comma-separated) |
-| `--prompt-file <FILE>` | — | Path to a file with one prompt per line |
+| `--prompts <PROMPT,...>` |  -  | Inline prompts (comma-separated) |
+| `--prompt-file <FILE>` |  -  | Path to a file with one prompt per line |
 | `--runs <N>` | `3` | Runs per prompt (for statistical stability) |
 | `--concurrency <N>` | `4` | Maximum concurrent in-flight API calls |
 | `--output [table\|json]` | `table` | Output format |
-| `--output-file <FILE>` | — | Save full JSON results to a file |
+| `--output-file <FILE>` |  -  | Save full JSON results to a file |
 | `--max-tokens <N>` | `512` | Maximum completion tokens per request |
 
 ### `llm-bench models`
@@ -116,9 +116,9 @@ llm-bench 0.1.0
 
 Model strings are resolved in order:
 
-1. **Explicit prefix** — `openai:gpt-4o`, `anthropic:claude-3-5-haiku-20241022`
-2. **Auto-detect** — `gpt-*` and `o1*`/`o3*` → OpenAI; `claude-*` → Anthropic
-3. **Error** — anything else; disambiguate with a prefix
+1. **Explicit prefix**  -  `openai:gpt-4o`, `anthropic:claude-3-5-haiku-20241022`
+2. **Auto-detect**  -  `gpt-*` and `o1*`/`o3*` → OpenAI; `claude-*` → Anthropic
+3. **Error**  -  anything else; disambiguate with a prefix
 
 ---
 
@@ -166,13 +166,13 @@ cargo clippy --all-features -- -D warnings
 
 ```
 src/
-  main.rs        — CLI wiring, progress bar, Ctrl+C handler
-  cli.rs         — clap argument structs + BenchConfig builder
-  runner.rs      — concurrent task dispatch (semaphore-bounded)
-  providers.rs   — OpenAI + Anthropic HTTP calls, cost calculation
-  report.rs      — p50/p99 aggregation, table + JSON rendering
-  types.rs       — shared domain types (BenchResult, BenchConfig, …)
-  error.rs       — typed BenchError enum (thiserror)
+  main.rs         -  CLI wiring, progress bar, Ctrl+C handler
+  cli.rs          -  clap argument structs + BenchConfig builder
+  runner.rs       -  concurrent task dispatch (semaphore-bounded)
+  providers.rs    -  OpenAI + Anthropic HTTP calls, cost calculation
+  report.rs       -  p50/p99 aggregation, table + JSON rendering
+  types.rs        -  shared domain types (BenchResult, BenchConfig, …)
+  error.rs        -  typed BenchError enum (thiserror)
 ```
 
 ---

@@ -26,7 +26,7 @@ use crate::error::BenchError;
 use crate::providers::{run_anthropic, run_openai};
 use crate::types::{BenchConfig, BenchResult, ProviderConfig};
 
-// ─── Runner ───────────────────────────────────────────────────────────────────
+//  Runner 
 
 /// Drives a full benchmark run and returns all individual results.
 pub struct BenchRunner {
@@ -48,13 +48,13 @@ impl BenchRunner {
 
     /// Run the full benchmark suite described by `config`.
     ///
-    /// Returns a flat list of results — one per (provider, prompt, run_index)
+    /// Returns a flat list of results  -  one per (provider, prompt, run_index)
     /// triple.  Results for failed calls are omitted; callers should compute
     /// success_rate from the expected vs. actual count.
     ///
     /// # Arguments
-    /// * `config`    — benchmark parameters
-    /// * `on_progress` — callback invoked after each task completes; receives
+    /// * `config`     -  benchmark parameters
+    /// * `on_progress`  -  callback invoked after each task completes; receives
     ///   `(completed, total)`.
     ///
     /// # Panics
@@ -96,7 +96,7 @@ impl BenchRunner {
                 let client = client.clone();
 
                 tokio::spawn(async move {
-                    // Acquire semaphore slot — limits concurrency
+                    // Acquire semaphore slot  -  limits concurrency
                     let _permit = sem.acquire().await.map_err(|e| BenchError::Concurrency {
                         reason: e.to_string(),
                     })?;
@@ -167,7 +167,7 @@ async fn dispatch_call(
     }
 }
 
-// ─── Tests ────────────────────────────────────────────────────────────────────
+//  Tests 
 
 #[cfg(test)]
 mod tests {
@@ -190,7 +190,7 @@ mod tests {
         }
     }
 
-    // ── BenchRunner::new ──────────────────────────────────────────────────────
+    //  BenchRunner::new 
 
     #[test]
     fn test_bench_runner_new_succeeds() {
@@ -198,7 +198,7 @@ mod tests {
         assert!(runner.is_ok(), "BenchRunner::new should succeed");
     }
 
-    // ── dispatch_call unknown provider ────────────────────────────────────────
+    //  dispatch_call unknown provider 
 
     #[tokio::test]
     async fn test_dispatch_call_unknown_provider_returns_invalid_config() {
@@ -217,7 +217,7 @@ mod tests {
         );
     }
 
-    // ── Full runner with mock server ──────────────────────────────────────────
+    //  Full runner with mock server 
 
     // Note: runner.run() hardcodes API base URLs for production use.
     // We test the runner's concurrency and aggregation logic using the
@@ -292,7 +292,7 @@ mod tests {
         assert_eq!(call_count.load(std::sync::atomic::Ordering::Relaxed), 3);
     }
 
-    // ── Semaphore concurrency cap ─────────────────────────────────────────────
+    //  Semaphore concurrency cap 
 
     #[tokio::test]
     async fn test_semaphore_limits_concurrency() {
@@ -308,7 +308,7 @@ mod tests {
         assert!(p3.is_err(), "third permit should fail (semaphore full)");
     }
 
-    // ── Provider config validation ────────────────────────────────────────────
+    //  Provider config validation 
 
     #[test]
     fn test_bench_config_with_multiple_providers_is_valid() {
@@ -383,7 +383,7 @@ mod tests {
         assert!(result.is_ok());
     }
 
-    // ── Atomic progress tracking ──────────────────────────────────────────────
+    //  Atomic progress tracking 
 
     #[test]
     fn test_atomic_counter_increments_correctly() {

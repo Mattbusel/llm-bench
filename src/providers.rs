@@ -24,7 +24,7 @@ use tracing::{debug, instrument};
 use crate::error::BenchError;
 use crate::types::{BenchResult, ProviderConfig};
 
-// ─── Pricing tables (USD per 1 000 tokens) ───────────────────────────────────
+//  Pricing tables (USD per 1 000 tokens) 
 
 /// USD per 1 000 prompt tokens for each model.
 fn prompt_price_per_1k(model: &str) -> f64 {
@@ -61,7 +61,7 @@ pub fn compute_cost(model: &str, prompt_tokens: u32, completion_tokens: u32) -> 
     p + c
 }
 
-// ─── OpenAI wire types ────────────────────────────────────────────────────────
+//  OpenAI wire types 
 
 #[derive(Serialize)]
 struct OpenAiRequest<'a> {
@@ -98,7 +98,7 @@ struct OpenAiUsage {
     completion_tokens: u32,
 }
 
-// ─── Anthropic wire types ─────────────────────────────────────────────────────
+//  Anthropic wire types 
 
 #[derive(Serialize)]
 struct AnthropicRequest<'a> {
@@ -132,16 +132,16 @@ struct AnthropicUsage {
     output_tokens: u32,
 }
 
-// ─── OpenAI provider ──────────────────────────────────────────────────────────
+//  OpenAI provider 
 
 /// Issue one inference request to the OpenAI chat-completions endpoint.
 ///
 /// # Arguments
-/// * `client`    — shared `reqwest::Client` (connection pool reuse)
-/// * `config`    — provider configuration (model, API key, max_tokens)
-/// * `base_url`  — API base URL (overrideable for testing)
-/// * `prompt`    — the user prompt string
-/// * `run_idx`   — zero-based run index within the prompt batch
+/// * `client`     -  shared `reqwest::Client` (connection pool reuse)
+/// * `config`     -  provider configuration (model, API key, max_tokens)
+/// * `base_url`   -  API base URL (overrideable for testing)
+/// * `prompt`     -  the user prompt string
+/// * `run_idx`    -  zero-based run index within the prompt batch
 ///
 /// # Returns
 /// `Ok(BenchResult)` on success, or a typed `BenchError` on failure.
@@ -243,16 +243,16 @@ pub async fn run_openai(
     })
 }
 
-// ─── Anthropic provider ───────────────────────────────────────────────────────
+//  Anthropic provider 
 
 /// Issue one inference request to the Anthropic messages endpoint.
 ///
 /// # Arguments
-/// * `client`    — shared `reqwest::Client`
-/// * `config`    — provider configuration
-/// * `base_url`  — API base URL (overrideable for testing)
-/// * `prompt`    — the user prompt string
-/// * `run_idx`   — zero-based run index
+/// * `client`     -  shared `reqwest::Client`
+/// * `config`     -  provider configuration
+/// * `base_url`   -  API base URL (overrideable for testing)
+/// * `prompt`     -  the user prompt string
+/// * `run_idx`    -  zero-based run index
 ///
 /// # Returns
 /// `Ok(BenchResult)` on success, or a typed `BenchError` on failure.
@@ -406,7 +406,7 @@ pub struct ModelInfo {
     pub completion_per_1k: f64,
 }
 
-// ─── Tests ────────────────────────────────────────────────────────────────────
+//  Tests 
 
 #[cfg(test)]
 mod tests {
@@ -414,7 +414,7 @@ mod tests {
     use wiremock::matchers::{header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
-    // ── Cost calculation ──────────────────────────────────────────────────────
+    //  Cost calculation 
 
     #[test]
     fn test_compute_cost_gpt4o_mini_known_values() {
@@ -485,7 +485,7 @@ mod tests {
         );
     }
 
-    // ── Price tables ──────────────────────────────────────────────────────────
+    //  Price tables 
 
     #[test]
     fn test_prompt_price_per_1k_gpt4_turbo() {
@@ -518,7 +518,7 @@ mod tests {
         assert!((dated - latest).abs() < 1e-9, "aliases should have same price");
     }
 
-    // ── supported_models ──────────────────────────────────────────────────────
+    //  supported_models 
 
     #[test]
     fn test_supported_models_non_empty() {
@@ -564,7 +564,7 @@ mod tests {
         assert!(found, "haiku should be in supported models");
     }
 
-    // ── OpenAI wire mock ──────────────────────────────────────────────────────
+    //  OpenAI wire mock 
 
     fn openai_config(api_key: &str, model: &str) -> ProviderConfig {
         ProviderConfig {
@@ -711,7 +711,7 @@ mod tests {
         assert_eq!(result.unwrap_or_else(|_| unreachable!()).run_index, 7);
     }
 
-    // ── Anthropic wire mock ───────────────────────────────────────────────────
+    //  Anthropic wire mock 
 
     #[tokio::test]
     async fn test_run_anthropic_success_parses_result() {

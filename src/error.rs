@@ -16,7 +16,7 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 pub enum BenchError {
     /// The upstream API returned a non-2xx status code.
-    #[error("API error from '{provider}' (model '{model}'): HTTP {status} — {body}")]
+    #[error("API error from '{provider}' (model '{model}'): HTTP {status}  -  {body}")]
     ApiError {
         provider: String,
         model: String,
@@ -52,13 +52,13 @@ pub enum BenchError {
     Concurrency { reason: String },
 }
 
-// ─── Tests ───────────────────────────────────────────────────────────────────
+//  Tests 
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    // ── Display formatting ────────────────────────────────────────────────────
+    //  Display formatting 
 
     #[test]
     fn test_api_error_display_contains_provider_model_status() {
@@ -131,7 +131,7 @@ mod tests {
         assert!(msg.contains("task join failed"), "expected reason in: {msg}");
     }
 
-    // ── Debug trait ───────────────────────────────────────────────────────────
+    //  Debug trait 
 
     #[test]
     fn test_all_variants_are_debug_printable() {
@@ -170,7 +170,7 @@ mod tests {
         }
     }
 
-    // ── Source chain ──────────────────────────────────────────────────────────
+    //  Source chain 
 
     #[test]
     fn test_io_error_has_source() {

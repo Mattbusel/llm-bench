@@ -20,7 +20,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 use crate::error::BenchError;
 use crate::types::{BenchConfig, ProviderConfig};
 
-// ─── Top-level CLI ────────────────────────────────────────────────────────────
+//  Top-level CLI 
 
 /// Universal LLM provider benchmark CLI.
 ///
@@ -51,7 +51,7 @@ pub enum Command {
     Version,
 }
 
-// ─── `run` sub-command ────────────────────────────────────────────────────────
+//  `run` sub-command 
 
 /// Arguments for the `run` sub-command.
 #[derive(Debug, Parser)]
@@ -113,7 +113,7 @@ pub enum OutputFormat {
     Json,
 }
 
-// ─── Config builder ───────────────────────────────────────────────────────────
+//  Config builder 
 
 /// Build a `BenchConfig` from parsed `RunArgs`.
 ///
@@ -129,7 +129,7 @@ pub enum OutputFormat {
 /// # Panics
 /// This function never panics.
 pub fn build_config(args: &RunArgs) -> Result<BenchConfig, BenchError> {
-    // ── Collect prompts ───────────────────────────────────────────────────────
+    //  Collect prompts 
     let mut prompts: Vec<String> = args.prompts.clone();
 
     if let Some(ref path) = args.prompt_file {
@@ -148,7 +148,7 @@ pub fn build_config(args: &RunArgs) -> Result<BenchConfig, BenchError> {
         });
     }
 
-    // ── Resolve providers ─────────────────────────────────────────────────────
+    //  Resolve providers 
     let mut providers: Vec<ProviderConfig> = Vec::new();
 
     for model_str in &args.models {
@@ -233,13 +233,13 @@ fn resolve_model(s: &str) -> Result<(&'static str, &str), BenchError> {
     })
 }
 
-// ─── Tests ────────────────────────────────────────────────────────────────────
+//  Tests 
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    // ── resolve_model ─────────────────────────────────────────────────────────
+    //  resolve_model 
 
     #[test]
     fn test_resolve_model_openai_prefix() {
@@ -291,7 +291,7 @@ mod tests {
         assert!(result.is_err());
     }
 
-    // ── build_config ──────────────────────────────────────────────────────────
+    //  build_config 
 
     fn minimal_run_args(model: &str, key_name: &str, key_val: &str) -> RunArgs {
         let (openai_key, anthropic_key) = if key_name == "openai" {
@@ -512,7 +512,7 @@ mod tests {
         let _ = std::fs::remove_file(&path);
     }
 
-    // ── OutputFormat ──────────────────────────────────────────────────────────
+    //  OutputFormat 
 
     #[test]
     fn test_output_format_is_debug_printable() {

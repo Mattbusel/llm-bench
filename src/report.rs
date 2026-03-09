@@ -22,7 +22,7 @@ use tabled::{Table, Tabled};
 use crate::error::BenchError;
 use crate::types::{BenchResult, BenchSummary};
 
-// ─── Summary generation ───────────────────────────────────────────────────────
+//  Summary generation 
 
 /// Aggregate a flat list of results into per-provider-model summaries.
 ///
@@ -101,7 +101,7 @@ fn percentile_sorted(sorted: &[u64], p: usize) -> u64 {
     sorted[idx]
 }
 
-// ─── Table rendering ──────────────────────────────────────────────────────────
+//  Table rendering 
 
 /// Row type for `tabled` table rendering.
 #[derive(Tabled)]
@@ -152,7 +152,7 @@ pub fn print_table(summaries: &[BenchSummary]) {
     println!("\n{}\n", table.cyan());
 }
 
-// ─── JSON output ──────────────────────────────────────────────────────────────
+//  JSON output 
 
 /// Serialise the full result set to a JSON string.
 ///
@@ -166,14 +166,14 @@ pub fn print_results_json(results: &[BenchResult]) -> Result<String, BenchError>
     serde_json::to_string_pretty(results).map_err(BenchError::SerdeJson)
 }
 
-// ─── Tests ────────────────────────────────────────────────────────────────────
+//  Tests 
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::types::BenchResult;
 
-    // ── Helpers ───────────────────────────────────────────────────────────────
+    //  Helpers 
 
     fn make_result(
         provider: &str,
@@ -197,7 +197,7 @@ mod tests {
         }
     }
 
-    // ── percentile_sorted ─────────────────────────────────────────────────────
+    //  percentile_sorted 
 
     #[test]
     fn test_percentile_sorted_empty_returns_zero() {
@@ -258,7 +258,7 @@ mod tests {
         assert_eq!(percentile_sorted(&data, 99), 77);
     }
 
-    // ── generate_summary ──────────────────────────────────────────────────────
+    //  generate_summary 
 
     #[test]
     fn test_generate_summary_empty_input_returns_empty() {
@@ -378,7 +378,7 @@ mod tests {
         assert_eq!(summaries[2].model, "gpt-4o-mini");
     }
 
-    // ── print_results_json ────────────────────────────────────────────────────
+    //  print_results_json 
 
     #[test]
     fn test_print_results_json_empty_slice_returns_empty_array() {
@@ -420,7 +420,7 @@ mod tests {
         assert_eq!(arr_len, 3);
     }
 
-    // ── print_table (smoke tests — checks no panic) ───────────────────────────
+    //  print_table (smoke tests  -  checks no panic) 
 
     #[test]
     fn test_print_table_empty_does_not_panic() {
