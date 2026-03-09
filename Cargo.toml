@@ -1,0 +1,61 @@
+[workspace]
+
+[package]
+name = "llm-bench"
+version = "0.1.0"
+edition = "2021"
+description = "Universal LLM provider benchmark CLI — compare OpenAI and Anthropic on latency, cost, quality, and throughput"
+license = "MIT"
+keywords = ["llm", "benchmark", "openai", "anthropic", "cli"]
+categories = ["command-line-utilities", "development-tools"]
+
+[[bin]]
+name = "llm-bench"
+path = "src/main.rs"
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+
+[dependencies]
+# tokio: async runtime — core dependency for concurrent benchmark runs
+tokio = { version = "1.40", features = ["full"] }
+
+# reqwest: HTTP client for OpenAI and Anthropic API calls
+reqwest = { version = "0.12", features = ["json"] }
+
+# serde / serde_json: serialization for API request/response and JSON output
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# thiserror: zero-cost typed error derive — replaces manual Display impls
+thiserror = "1.0"
+
+# clap: command-line argument parsing with derive macro
+clap = { version = "4.5", features = ["derive", "env"] }
+
+# indicatif: progress bars during benchmark runs
+indicatif = "0.17"
+
+# tabled: formatted ASCII tables for benchmark output
+tabled = "0.15"
+
+# colored: terminal color support for output
+colored = "2.1"
+
+# tracing / tracing-subscriber: structured logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# futures: async combinators for concurrent provider execution
+futures = "0.3"
+
+# tokio-stream: stream utilities for streaming API responses
+tokio-stream = "0.1"
+
+[dev-dependencies]
+# wiremock: HTTP mock server for provider API testing
+wiremock = "0.6"
+
+# tokio test macro already provided by tokio/full
