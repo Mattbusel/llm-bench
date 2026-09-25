@@ -166,13 +166,12 @@ pub async fn run_openai(
         max_tokens: config.max_tokens,
     };
 
+    let mut req = client.post(&url).json(&body);
+    if !config.api_key.is_empty() {
+        req = req.bearer_auth(&config.api_key);
+    }
     let start = Instant::now();
-    let resp = client
-        .post(&url)
-        .bearer_auth(&config.api_key)
-        .json(&body)
-        .send()
-        .await?;
+    let resp = req.send().await?;
 
     let status = resp.status().as_u16();
     let total_ms = start.elapsed().as_millis() as u64;
@@ -277,14 +276,15 @@ pub async fn run_anthropic(
         }],
     };
 
-    let start = Instant::now();
-    let resp = client
+    let mut req = client
         .post(&url)
-        .header("x-api-key", &config.api_key)
         .header("anthropic-version", "2023-06-01")
-        .json(&body)
-        .send()
-        .await?;
+        .json(&body);
+    if !config.api_key.is_empty() {
+        req = req.header("x-api-key", &config.api_key);
+    }
+    let start = Instant::now();
+    let resp = req.send().await?;
 
     let status = resp.status().as_u16();
     let total_ms = start.elapsed().as_millis() as u64;
@@ -572,6 +572,7 @@ mod tests {
             name: "openai".into(),
             model: model.to_owned(),
             api_key: api_key.to_owned(),
+            base_url: String::new(),
             max_tokens: 64,
         }
     }
@@ -581,6 +582,7 @@ mod tests {
             name: "anthropic".into(),
             model: model.to_owned(),
             api_key: api_key.to_owned(),
+            base_url: String::new(),
             max_tokens: 64,
         }
     }

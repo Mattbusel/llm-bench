@@ -89,10 +89,10 @@ async fn run_benchmark(args: cli::RunArgs) -> Result<(), BenchError> {
     let pb = ProgressBar::new(total_tasks as u64);
     pb.set_style(
         ProgressStyle::with_template(
-            "{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta})",
+            "{spinner:.green} {bar:40.cyan/blue} {pos}/{len} requests  {elapsed_precise}  eta {eta}",
         )
         .unwrap_or_else(|_| ProgressStyle::default_bar())
-        .progress_chars("=>-"),
+        .progress_chars("━╸─"),
     );
 
     let pb_arc = Arc::new(pb);
@@ -114,36 +114,51 @@ async fn run_benchmark(args: cli::RunArgs) -> Result<(), BenchError> {
     //  Run benchmark
     let bench_runner = runner::BenchRunner::new()?;
 
-    let results = bench_runner
-        .run(&config, move |done, _total| {
+    let (results, failures) = bench_runner
+        .run_detailed(&config, move |done, _total| {
             completed_cb.store(done, Ordering::Relaxed);
             pb_cb.set_position(done as u64);
         })
         .await?;
 
-    pb_arc.finish_with_message("done");
+    pb_arc.finish_and_clear();
 
     info!(result_count = results.len(), "benchmark complete");
 
     let success = results.len();
-    let failed = total_tasks.saturating_sub(success);
-
+    let failed = failures.len();
+    let rate = (success * 100).checked_div(success + failed).unwrap_or(0);
+    let status = format!("{success} succeeded, {failed} failed ({rate}% success rate)");
     println!(
-        "\n{} {success} succeeded, {failed} failed ({}% success rate)",
+        "
+{} {}",
         "Results:".bold(),
-        (success * 100).checked_div(total_tasks).unwrap_or(0)
+        if failed == 0 {
+            status.green()
+        } else {
+            status.yellow()
+        }
     );
 
     //  Output
     match args.output {
         OutputFormat::Table => {
-            let summaries = report::generate_summary(&results);
+            let summaries = report::generate_summary_with_failures(&results, &failures);
             report::print_table(&summaries);
         }
         OutputFormat::Json => {
             let json = report::print_results_json(&results)?;
             println!("{json}");
         }
+    }
+
+    let lines = report::failure_lines(&failures);
+    if !lines.is_empty() {
+        eprintln!("{}", "Failed requests:".yellow().bold());
+        for line in lines {
+            eprintln!("  {line}");
+        }
+        eprintln!();
     }
 
     //  Save to file
@@ -153,30 +168,38 @@ async fn run_benchmark(args: cli::RunArgs) -> Result<(), BenchError> {
         println!("{} Results saved to {}", "→".cyan(), path.display());
     }
 
+    if success == 0 && failed > 0 {
+        return Err(BenchError::InvalidConfig {
+            reason: "every request failed (reasons listed above)".into(),
+        });
+    }
+
     Ok(())
 }
 
 fn print_models_table() {
     println!(
         "\n{}\n",
-        "Supported models and pricing (USD per 1 000 tokens):".bold()
+        "Supported models and pricing (USD per 1 000 tokens)".bold()
     );
-    println!(
-        "{:<12} {:<35} {:>12} {:>15}",
-        "Provider".underline(),
-        "Model".underline(),
-        "Prompt/1k".underline(),
-        "Completion/1k".underline()
+    let header = format!(
+        "{:<11} {:<18} {:>11} {:>15}",
+        "Provider", "Model", "Prompt/1k", "Completion/1k"
     );
+    println!("{}", header.bold());
+    println!("{}", "─".repeat(header.chars().count()).dimmed());
 
     for m in providers::supported_models() {
         println!(
-            "{:<12} {:<35} {:>12} {:>15}",
+            "{:<11} {:<18} {:>11} {:>15}",
             m.provider,
             m.model,
             format!("${:.6}", m.prompt_per_1k),
             format!("${:.6}", m.completion_per_1k)
         );
     }
-    println!();
+    println!(
+        "\nCost is estimated from each response's token counts and these prices.\n{} llm-bench run --models gpt-4o-mini,claude-haiku-4-5 --prompts \"Say hi\"\n",
+        "Next:".cyan().bold()
+    );
 }

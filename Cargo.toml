@@ -2,15 +2,25 @@
 
 [package]
 name = "llm-bench"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2021"
-description = "LLM provider benchmark CLI: compare OpenAI and Anthropic on latency, cost, quality, and throughput"
+description = "Send the same prompts to OpenAI, Anthropic or any OpenAI-compatible server and compare p50/p99 latency, tokens per second and cost in one table"
 license = "MIT"
 repository = "https://github.com/Mattbusel/llm-bench"
 homepage = "https://github.com/Mattbusel/llm-bench"
 readme = "README.md"
-keywords = ["llm", "benchmark", "openai", "anthropic", "cli"]
+documentation = "https://github.com/Mattbusel/llm-bench#readme"
+exclude = ["assets/", "packaging/", "scripts/", ".github/", "install.sh", "install.ps1"]
+keywords = ["llm", "benchmark", "latency", "openai", "anthropic"]
 categories = ["command-line-utilities", "development-tools"]
+
+[package.metadata.binstall]
+pkg-url = "{ repo }/releases/download/v{ version }/{ name }-v{ version }-{ target }{ archive-suffix }"
+bin-dir = "{ name }-v{ version }-{ target }/{ bin }{ binary-ext }"
+pkg-fmt = "tgz"
+
+[package.metadata.binstall.overrides.x86_64-pc-windows-msvc]
+pkg-fmt = "zip"
 
 [[bin]]
 name = "llm-bench"

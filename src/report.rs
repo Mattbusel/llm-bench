@@ -17,10 +17,12 @@
 //! - CLI argument parsing (see `cli.rs`)
 
 use colored::Colorize;
+use tabled::settings::object::Columns;
+use tabled::settings::{Alignment, Modify, Style};
 use tabled::{Table, Tabled};
 
 use crate::error::BenchError;
-use crate::types::{BenchResult, BenchSummary};
+use crate::types::{BenchFailure, BenchResult, BenchSummary};
 
 //  Summary generation
 
@@ -85,6 +87,137 @@ pub fn generate_summary(results: &[BenchResult]) -> Vec<BenchSummary> {
     summaries
 }
 
+/// Like [`generate_summary`], but folds in failed requests so each row's
+/// `success_rate` is real (successes / attempts), and models whose every
+/// request failed still get a row (with 0% success).
+///
+/// # Panics
+/// This function never panics.
+pub fn generate_summary_with_failures(
+    results: &[BenchResult],
+    failures: &[BenchFailure],
+) -> Vec<BenchSummary> {
+    use std::collections::HashMap;
+
+    let mut failed: HashMap<(String, String), usize> = HashMap::new();
+    for f in failures {
+        *failed
+            .entry((f.provider.clone(), f.model.clone()))
+            .or_default() += 1;
+    }
+    let mut ok: HashMap<(String, String), usize> = HashMap::new();
+    for r in results {
+        *ok.entry((r.provider.clone(), r.model.clone())).or_default() += 1;
+    }
+
+    let mut summaries = generate_summary(results);
+    for s in &mut summaries {
+        let key = (s.provider.clone(), s.model.clone());
+        let good = ok.get(&key).copied().unwrap_or(0);
+        let bad = failed.get(&key).copied().unwrap_or(0);
+        s.success_rate = if good + bad > 0 {
+            good as f64 / (good + bad) as f64
+        } else {
+            0.0
+        };
+    }
+    for (provider, model) in failed.into_keys() {
+        if !ok.contains_key(&(provider.clone(), model.clone())) {
+            summaries.push(BenchSummary {
+                provider,
+                model,
+                p50_latency_ms: 0,
+                p99_latency_ms: 0,
+                avg_tokens_per_sec: 0.0,
+                avg_cost_usd: 0.0,
+                total_cost_usd: 0.0,
+                success_rate: 0.0,
+            });
+        }
+    }
+    summaries.sort_by(|a, b| a.provider.cmp(&b.provider).then(a.model.cmp(&b.model)));
+    summaries
+}
+
+/// One line per distinct failure reason, with a count and a hint on how to
+/// fix the common ones. Returns an empty vector when nothing failed.
+///
+/// # Panics
+/// This function never panics.
+pub fn failure_lines(failures: &[BenchFailure]) -> Vec<String> {
+    let mut seen: Vec<(String, usize)> = Vec::new();
+    for f in failures {
+        let mut msg = format!("{}/{}: {}", f.provider, f.model, f.error);
+        if msg.len() > 220 {
+            let mut cut = 220;
+            while !msg.is_char_boundary(cut) {
+                cut -= 1;
+            }
+            msg.truncate(cut);
+            msg.push_str("...");
+        }
+        match seen.iter_mut().find(|(m, _)| *m == msg) {
+            Some((_, n)) => *n += 1,
+            None => seen.push((msg, 1)),
+        }
+    }
+    seen.into_iter()
+        .map(|(msg, n)| {
+            let hint = failure_hint(&msg);
+            let count = if n > 1 {
+                format!("{n}x ")
+            } else {
+                String::new()
+            };
+            if hint.is_empty() {
+                format!("{count}{msg}")
+            } else {
+                format!("{count}{msg}\n      hint: {hint}")
+            }
+        })
+        .collect()
+}
+
+/// A short "how to fix it" for well-known failure messages.
+fn failure_hint(msg: &str) -> &'static str {
+    if msg.contains("HTTP 401") || msg.contains("HTTP 403") {
+        "the API key was rejected; check OPENAI_API_KEY / ANTHROPIC_API_KEY"
+    } else if msg.contains("HTTP 404") {
+        "unknown model or wrong base URL; run `llm-bench models` or check --openai-base-url"
+    } else if msg.contains("Rate limited") {
+        "lower --concurrency or use fewer --runs"
+    } else if msg.contains("error sending request") || msg.contains("transport error") {
+        "could not reach the server; check your network or the base URL"
+    } else {
+        ""
+    }
+}
+
+/// "Fastest: ... Cheapest: ..." line under the table, or `None` when fewer
+/// than two models produced results (nothing to compare).
+///
+/// # Panics
+/// This function never panics.
+pub fn verdict_line(summaries: &[BenchSummary]) -> Option<String> {
+    let live: Vec<&BenchSummary> = summaries.iter().filter(|s| s.success_rate > 0.0).collect();
+    if live.len() < 2 {
+        return None;
+    }
+    let fastest = live.iter().min_by_key(|s| s.p50_latency_ms)?;
+    let cheapest = live
+        .iter()
+        .min_by(|a, b| a.avg_cost_usd.total_cmp(&b.avg_cost_usd))?;
+    Some(format!(
+        "{} {} (p50 {} ms)   {} {} (${:.6} per request)",
+        "Fastest:".green().bold(),
+        fastest.model,
+        fastest.p50_latency_ms,
+        "Cheapest:".green().bold(),
+        cheapest.model,
+        cheapest.avg_cost_usd
+    ))
+}
+
 /// Return the value at the given integer percentile from a **sorted** slice.
 ///
 /// Uses the "nearest rank" method: index = ceil(p/100 * n) - 1, clamped.
@@ -136,20 +269,32 @@ pub fn print_table(summaries: &[BenchSummary]) {
 
     let rows: Vec<SummaryRow> = summaries
         .iter()
-        .map(|s| SummaryRow {
-            provider: s.provider.clone(),
-            model: s.model.clone(),
-            p50_ms: format!("{}", s.p50_latency_ms),
-            p99_ms: format!("{}", s.p99_latency_ms),
-            tokens_per_sec: format!("{:.1}", s.avg_tokens_per_sec),
-            avg_cost: format!("${:.6}", s.avg_cost_usd),
-            total_cost: format!("${:.6}", s.total_cost_usd),
-            success_rate: format!("{:.0}%", s.success_rate * 100.0),
+        .map(|s| {
+            // A model whose every request failed has no numbers to show.
+            let dead = s.success_rate == 0.0;
+            let cell = |v: String| if dead { "-".to_owned() } else { v };
+            SummaryRow {
+                provider: s.provider.clone(),
+                model: s.model.clone(),
+                p50_ms: cell(format!("{}", s.p50_latency_ms)),
+                p99_ms: cell(format!("{}", s.p99_latency_ms)),
+                tokens_per_sec: cell(format!("{:.1}", s.avg_tokens_per_sec)),
+                avg_cost: cell(format!("${:.6}", s.avg_cost_usd)),
+                total_cost: cell(format!("${:.6}", s.total_cost_usd)),
+                success_rate: format!("{:.0}%", s.success_rate * 100.0),
+            }
         })
         .collect();
 
-    let table = Table::new(rows).to_string();
-    println!("\n{}\n", table.cyan());
+    let table = Table::new(rows)
+        .with(Style::rounded())
+        .with(Modify::new(Columns::new(2..)).with(Alignment::right()))
+        .to_string();
+    println!("\n{}", table.cyan());
+    if let Some(line) = verdict_line(summaries) {
+        println!("{line}");
+    }
+    println!();
 }
 
 //  JSON output
@@ -195,6 +340,64 @@ mod tests {
             response_text: "response".into(),
             run_index: 0,
         }
+    }
+
+    //  failures
+
+    fn fail(provider: &str, model: &str, err: &str) -> BenchFailure {
+        BenchFailure {
+            provider: provider.into(),
+            model: model.into(),
+            error: err.into(),
+        }
+    }
+
+    #[test]
+    fn test_summary_with_failures_real_success_rate() {
+        let results = vec![
+            make_result("openai", "gpt-4o-mini", 100, 0.001, 50.0),
+            make_result("openai", "gpt-4o-mini", 200, 0.001, 50.0),
+            make_result("openai", "gpt-4o-mini", 300, 0.001, 50.0),
+        ];
+        let failures = vec![fail("openai", "gpt-4o-mini", "HTTP 500")];
+        let s = generate_summary_with_failures(&results, &failures);
+        assert_eq!(s.len(), 1);
+        assert!((s[0].success_rate - 0.75).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_summary_with_failures_keeps_all_failed_model() {
+        let results = vec![make_result("openai", "gpt-4o-mini", 100, 0.001, 50.0)];
+        let failures = vec![fail("anthropic", "claude-haiku-4-5", "HTTP 401")];
+        let s = generate_summary_with_failures(&results, &failures);
+        assert_eq!(s.len(), 2);
+        assert_eq!(s[0].provider, "anthropic");
+        assert_eq!(s[0].success_rate, 0.0);
+    }
+
+    #[test]
+    fn test_failure_lines_groups_and_hints() {
+        let failures = vec![
+            fail("openai", "gpt-4o", "API error: HTTP 401  -  bad key"),
+            fail("openai", "gpt-4o", "API error: HTTP 401  -  bad key"),
+        ];
+        let lines = failure_lines(&failures);
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].starts_with("2x "));
+        assert!(lines[0].contains("hint:"));
+    }
+
+    #[test]
+    fn test_verdict_line_needs_two_models() {
+        let one = generate_summary(&[make_result("openai", "a", 100, 0.001, 50.0)]);
+        assert!(verdict_line(&one).is_none());
+        let two = generate_summary(&[
+            make_result("openai", "a", 100, 0.002, 50.0),
+            make_result("openai", "b", 300, 0.001, 50.0),
+        ]);
+        let line = verdict_line(&two).unwrap_or_default();
+        assert!(line.contains("a (p50 100 ms)"), "got {line}");
+        assert!(line.contains("b ($0.001000"), "got {line}");
     }
 
     //  percentile_sorted

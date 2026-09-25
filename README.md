@@ -1,203 +1,191 @@
+<p align="center">
+  <img src="https://raw.githubusercontent.com/Mattbusel/llm-bench/main/assets/banner.png" alt="llm-bench: send the same prompts to several models and compare p50/p99 latency, tokens per second and cost" width="100%">
+</p>
+
 # llm-bench
 
-[![CI](https://github.com/Mattbusel/llm-bench/actions/workflows/ci.yml/badge.svg)](https://github.com/Mattbusel/llm-bench/actions/workflows/ci.yml)
+**Find out which LLM is actually fastest and cheapest for your prompts, from your own machine, in one command.**
 
-A command-line benchmark for LLM APIs: send the same prompts to OpenAI and Anthropic models concurrently and compare p50/p99 latency, tokens per second, cost per request and success rate in one table or JSON file.
+It sends the same prompts to several models at once (OpenAI, Anthropic, or any OpenAI-compatible server such as Ollama, vLLM or LM Studio) and prints one table: p50/p99 latency, tokens per second, cost per request and success rate.
 
-Vendor latency numbers rarely match what you see from your own network with your own prompts. `llm-bench` runs your prompts N times against each model with a bounded number of requests in flight, then aggregates the results per model, so you can pick a model on measured speed and cost instead of a pricing page.
+<p align="center">
+  <img src="https://raw.githubusercontent.com/Mattbusel/llm-bench/main/assets/demo.gif" alt="llm-bench models, then llm-bench run comparing gpt-4o-mini, gpt-4o and claude-haiku-4-5 with a live progress bar and a results table" width="100%">
+</p>
+<p align="center"><sub>Real recording of llm-bench 0.2.1 on 2026-09-25. It is pointed at the bundled <a href="https://github.com/Mattbusel/llm-bench/blob/main/scripts/mock_server.py">local mock server</a> (canned replies, simulated latency), so no API keys were used and the numbers are not real model speeds.</sub></p>
 
----
+## Install
 
-## Installation
+| Platform | Command |
+|----------|---------|
+| Windows (PowerShell) | `irm https://raw.githubusercontent.com/Mattbusel/llm-bench/main/install.ps1 \| iex` |
+| macOS / Linux | `curl -fsSL https://raw.githubusercontent.com/Mattbusel/llm-bench/main/install.sh \| sh` |
+| Homebrew | `brew install mattbusel/tap/llm-bench` |
+| Scoop | `scoop bucket add mattbusel https://github.com/Mattbusel/scoop-bucket` then `scoop install llm-bench` |
+| Rust, prebuilt | `cargo binstall llm-bench` |
+| Rust, from source | `cargo install llm-bench` |
+| Manual | Download a zip or tarball from [Releases](https://github.com/Mattbusel/llm-bench/releases/latest) (Windows, macOS Intel and Apple Silicon, Linux x86_64) |
 
-### Download (no Rust needed)
+The scripts verify the download against the release's `SHA256SUMS.txt`. The Windows script installs to `%LOCALAPPDATA%\Programs\llm-bench` and adds it to your user PATH; the shell script installs to `~/.local/bin`. The binaries are not code-signed: Windows SmartScreen may say "unknown publisher" (More info, then Run anyway), and on macOS a manually downloaded file may need `xattr -d com.apple.quarantine llm-bench`.
 
-Grab the file for your system from the [latest release](https://github.com/Mattbusel/llm-bench/releases/latest):
+## Use it in 3 steps
 
-| System | File |
-|--------|------|
-| Windows | `llm-bench-vX.Y.Z-x86_64-pc-windows-msvc.zip` |
-| macOS (Apple Silicon) | `llm-bench-vX.Y.Z-aarch64-apple-darwin.tar.gz` |
-| macOS (Intel) | `llm-bench-vX.Y.Z-x86_64-apple-darwin.tar.gz` |
-| Linux (x86_64) | `llm-bench-vX.Y.Z-x86_64-unknown-linux-gnu.tar.gz` |
-
-Unzip it and run `llm-bench --help` (`llm-bench.exe` on Windows) from a terminal. `SHA256SUMS.txt` in the release lets you verify the download.
-
-The binaries are not code-signed. Windows SmartScreen may say "unknown publisher": click **More info**, then **Run anyway**. On macOS, if it is blocked, right-click the file and choose **Open** (or run `xattr -d com.apple.quarantine llm-bench`).
-
-### With Cargo
-
-```bash
-cargo install llm-bench
-```
-
-### From source
+**1. See which models it knows prices for**
 
 ```bash
-git clone https://github.com/Mattbusel/llm-bench
-cd llm-bench
-cargo build --release
-./target/release/llm-bench --help
+llm-bench models
 ```
 
----
+You get a table of models with prompt and completion prices per 1 000 tokens.
 
-## Quick Start
+**2. Give it a key** (only the providers you benchmark need one)
 
 ```bash
-# Set API keys once
-export OPENAI_API_KEY=sk-...
-export ANTHROPIC_API_KEY=sk-ant-...
-
-# Run a benchmark with the defaults (gpt-4o-mini vs claude-3-5-haiku)
-llm-bench run --prompts "Explain Rust in one sentence,Write a haiku about latency"
-
-# Compare flagship models with 5 runs per prompt
-llm-bench run \
- --models gpt-4o,claude-sonnet-5 \
- --prompts "Summarise the CAP theorem" \
- --runs 5 \
- --concurrency 8
-
-# Use a file of prompts and save JSON output
-llm-bench run \
- --prompt-file prompts.txt \
- --output json \
- --output-file results.json
+export OPENAI_API_KEY=sk-...           # PowerShell: $env:OPENAI_API_KEY="sk-..."
+export ANTHROPIC_API_KEY=sk-ant-...    # PowerShell: $env:ANTHROPIC_API_KEY="sk-ant-..."
 ```
 
----
+**3. Run a benchmark**
 
-## Output
-
-A progress bar while requests run, then one row per model. The layout looks like this (values depend entirely on your prompts, network and the providers at the time):
-
-```
-Results: 12 succeeded, 0 failed (100% success rate)
-
-| Provider  | Model                     | P50 (ms) | P99 (ms) | Tok/s | Avg Cost | Total Cost | Success |
-| anthropic | claude-haiku-4-5 |      ... |      ... |   ... |      ... |        ... |     ... |
-| openai    | gpt-4o-mini               |      ... |      ... |   ... |      ... |        ... |     ... |
+```bash
+llm-bench run --models gpt-4o-mini,claude-haiku-4-5 --prompts "Explain Rust in one sentence,Write a haiku about latency" --runs 4
 ```
 
-- **P50 / P99**: latency percentiles over all runs of that model (full response time; requests are not streamed).
+A progress bar counts the requests, then one row per model appears, followed by the fastest and cheapest model.
+
+No key? Try it against a local model or the bundled mock server:
+
+```bash
+# Ollama (or any OpenAI-compatible server); no key needed
+llm-bench run --openai-base-url http://localhost:11434 --models openai:llama3.2 --prompts "Say hi"
+
+# The mock server from the recording (Python 3, no dependencies; download scripts/mock_server.py from this repo)
+python scripts/mock_server.py
+llm-bench run --openai-base-url http://127.0.0.1:8787 --anthropic-base-url http://127.0.0.1:8787 \
+  --models gpt-4o-mini,gpt-4o,claude-haiku-4-5 --prompts "Say hi"
+```
+
+## Results
+
+This is the exact output of the run in the recording (local mock server, 2026-09-25):
+
+```
+→ Benchmarking 3 model(s) × 2 prompt(s) × 4 run(s) = 24 total requests
+
+Results: 24 succeeded, 0 failed (100% success rate)
+
+╭───────────┬──────────────────┬──────────┬──────────┬───────┬───────────┬────────────┬─────────╮
+│ Provider  │ Model            │ P50 (ms) │ P99 (ms) │ Tok/s │  Avg Cost │ Total Cost │ Success │
+├───────────┼──────────────────┼──────────┼──────────┼───────┼───────────┼────────────┼─────────┤
+│ anthropic │ claude-haiku-4-5 │      488 │      559 │  92.2 │ $0.000224 │  $0.001788 │    100% │
+│ openai    │ gpt-4o           │      734 │      845 │  74.9 │ $0.000804 │  $0.006435 │    100% │
+│ openai    │ gpt-4o-mini      │      294 │      442 │ 113.0 │ $0.000023 │  $0.000184 │    100% │
+╰───────────┴──────────────────┴──────────┴──────────┴───────┴───────────┴────────────┴─────────╯
+Fastest: gpt-4o-mini (p50 294 ms)   Cheapest: gpt-4o-mini ($0.000023 per request)
+```
+
+Latency comes from the mock's simulated delays, and cost is the built-in price table applied to the token counts the mock reported. Against the real APIs the same table shows what you actually get from your network, with your prompts, today.
+
+What the columns mean:
+
+- **P50 / P99**: median and 99th-percentile response time over all runs of that model (full response; requests are not streamed).
 - **Tok/s**: completion tokens divided by response time, averaged.
-- **Avg / Total Cost**: from the provider's token counts and the built-in price table (`llm-bench models`).
+- **Avg / Total Cost**: the provider's token counts times the built-in price table (`llm-bench models`).
+- **Success**: share of requests that returned a response. Failed requests are listed under the table with a hint (for example "the API key was rejected" or "could not reach the server"), and if every request fails the command exits with status 1.
 
-Results are printed when the whole run finishes; Ctrl+C aborts the run without a report.
-
----
-
-## CLI Reference
+<details>
+<summary><b>All options</b></summary>
 
 ### `llm-bench run`
 
 | Flag | Default | Description |
 |------|---------|-------------|
+| `--models <MODEL,...>` | `gpt-4o-mini,claude-haiku-4-5` | Comma-separated model IDs. `gpt-*`, `o1*`, `o3*` go to OpenAI and `claude-*` to Anthropic; prefix with `openai:` or `anthropic:` for anything else (for example `openai:llama3.2`) |
+| `--prompts <PROMPT,...>` | - | Inline prompts, comma-separated |
+| `--prompt-file <FILE>` | - | A file with one prompt per line (use this for prompts that contain commas) |
+| `--runs <N>` | `3` | Times each prompt is sent to each model |
+| `--concurrency <N>` | `4` | Maximum requests in flight at once |
+| `--max-tokens <N>` | `512` | Maximum completion tokens per request |
+| `--output table\|json` | `table` | Print the summary table or every individual result as JSON |
+| `--output-file <FILE>` | - | Also save every individual result as JSON |
 | `--openai-key <KEY>` | `$OPENAI_API_KEY` | OpenAI API key |
 | `--anthropic-key <KEY>` | `$ANTHROPIC_API_KEY` | Anthropic API key |
-| `--models <MODEL,...>` | `gpt-4o-mini,claude-haiku-4-5` | Comma-separated model IDs. Prefix with `openai:` or `anthropic:` to disambiguate, or use bare names for known models |
-| `--prompts <PROMPT,...>` | - | Inline prompts (comma-separated) |
-| `--prompt-file <FILE>` | - | Path to a file with one prompt per line |
-| `--runs <N>` | `3` | Runs per prompt (for statistical stability) |
-| `--concurrency <N>` | `4` | Maximum concurrent in-flight API calls |
-| `--output [table\|json]` | `table` | Output format |
-| `--output-file <FILE>` | - | Save full JSON results to a file |
-| `--max-tokens <N>` | `512` | Maximum completion tokens per request |
+| `--openai-base-url <URL>` | `$OPENAI_BASE_URL`, else `https://api.openai.com` | Any OpenAI-compatible server. `http://host:port` and `http://host:port/v1` both work. With a custom URL the key is optional |
+| `--anthropic-base-url <URL>` | `$ANTHROPIC_BASE_URL`, else `https://api.anthropic.com` | A proxy or gateway for the Anthropic Messages API |
 
 ### `llm-bench models`
 
-Lists all supported models with prompt and completion pricing (USD / 1 000 tokens).
+Lists the built-in price table (USD per 1 000 tokens) used for cost estimates.
 
 ```
-Supported models and pricing (USD per 1 000 tokens):
-
-Provider     Model                                  Prompt/1k   Completion/1k
-openai       gpt-4o                                 $0.005000       $0.015000
-openai       gpt-4o-mini                            $0.000150       $0.000600
-openai       gpt-4-turbo                            $0.010000       $0.030000
-anthropic    claude-sonnet-5                        $0.002000       $0.010000
-anthropic    claude-haiku-4-5                       $0.001000       $0.005000
-anthropic    claude-opus-5                          $0.005000       $0.025000
+Provider    Model                Prompt/1k   Completion/1k
+──────────────────────────────────────────────────────────
+openai      gpt-4o               $0.005000       $0.015000
+openai      gpt-4o-mini          $0.000150       $0.000600
+openai      gpt-4-turbo          $0.010000       $0.030000
+anthropic   claude-sonnet-5      $0.002000       $0.010000
+anthropic   claude-haiku-4-5     $0.001000       $0.005000
+anthropic   claude-opus-5        $0.005000       $0.025000
 ```
 
-### `llm-bench version`
+Models that are not in the table (for example a local Ollama model) are costed at a flat fallback of $0.002 per 1 000 tokens, so treat their cost column as a placeholder.
 
-```
-llm-bench 0.2.0
-```
+### `llm-bench version` / `--version`
 
----
+Prints the version. `llm-bench --help` shows examples.
 
-## Model Selection
+</details>
 
-Model strings are resolved in order:
+<details>
+<summary><b>JSON output</b></summary>
 
-1. **Explicit prefix** - `openai:gpt-4o`, `anthropic:claude-haiku-4-5`
-2. **Auto-detect** - `gpt-*` and `o1*`/`o3*` go to OpenAI; `claude-*` goes to Anthropic
-3. **Error** - anything else; disambiguate with a prefix
-
----
-
-## JSON Output Schema
-
-Each element in the output array is a `BenchResult`:
+`--output json` or `--output-file results.json` writes one object per successful request:
 
 ```json
 {
- "provider": "openai",
- "model": "gpt-4o-mini",
- "prompt": "Explain Rust in one sentence",
- "latency_ms": 634,
- "total_ms": 634,
- "prompt_tokens": 12,
- "completion_tokens": 47,
- "cost_usd": 0.0000298,
- "tokens_per_second": 74.2,
- "response_text": "Rust is a systems programming language...",
- "run_index": 0
+  "provider": "openai",
+  "model": "gpt-4o-mini",
+  "prompt": "Explain Rust in one sentence",
+  "latency_ms": 634,
+  "total_ms": 634,
+  "prompt_tokens": 12,
+  "completion_tokens": 47,
+  "cost_usd": 0.0000298,
+  "tokens_per_second": 74.2,
+  "response_text": "Rust is a systems programming language...",
+  "run_index": 0
 }
 ```
 
----
+</details>
+
+<details>
+<summary><b>How it works, and limits</b></summary>
+
+```
+src/
+  main.rs       CLI wiring, progress bar, failure report
+  cli.rs        clap arguments, base URL handling, BenchConfig builder
+  runner.rs     concurrent dispatch bounded by a semaphore; collects results and failures
+  providers.rs  OpenAI Chat Completions + Anthropic Messages calls, price table
+  report.rs     p50/p99 aggregation, success rates, table and JSON rendering
+  types.rs      BenchResult, BenchFailure, BenchConfig, BenchSummary
+  error.rs      typed BenchError
+```
+
+- Two API shapes: OpenAI Chat Completions (also used by OpenAI-compatible servers) and Anthropic Messages.
+- Each request is a single non-streaming call, so time to first token is not measured separately.
+- `--prompts` splits on commas; use `--prompt-file` for prompts with commas.
+- The price table is built in; update `src/providers.rs` when prices change.
+- Results are printed when the whole run finishes; Ctrl+C stops the run without a report.
+
+</details>
 
 ## Development
 
 ```bash
-# Build
-cargo build --release
-
-# Run tests (126 tests; providers are tested against a local wiremock server, no API keys needed)
-cargo test
-
-# Check lint
-cargo clippy --all-features -- -D warnings
+cargo test     # 134 tests; providers run against a local wiremock server, no API keys needed
+cargo clippy -- -D warnings
+cargo fmt --check
 ```
 
----
-
-## Architecture
-
-```
-src/
- main.rs - CLI wiring, progress bar, Ctrl+C handler
- cli.rs - clap argument structs + BenchConfig builder
- runner.rs - concurrent task dispatch (semaphore-bounded)
- providers.rs - OpenAI + Anthropic HTTP calls, cost calculation
- report.rs - p50/p99 aggregation, table + JSON rendering
- types.rs - shared domain types (BenchResult, BenchConfig, …)
- error.rs - typed BenchError enum (thiserror)
-```
-
----
-
-## Limitations
-
-- Two providers only (OpenAI Chat Completions and Anthropic Messages). Other OpenAI-compatible endpoints are not configurable yet.
-- The price table is built in and covers six models (the Claude 3.x models it used to list have been retired by Anthropic and were replaced in 0.2.0); update `src/providers.rs` when prices change.
-- `--prompts` splits on commas, so use `--prompt-file` for prompts that contain commas.
-- Each request is a single non-streaming call, so time to first token is not measured separately.
-
----
-
-Related: [tokio-prompt-orchestrator](https://github.com/Mattbusel/tokio-prompt-orchestrator), a Rust orchestration layer for LLM pipelines, and the [rust-crates](https://github.com/Mattbusel/rust-crates) index.
+MIT licensed. Related: [tokio-prompt-orchestrator](https://github.com/Mattbusel/tokio-prompt-orchestrator), a Rust orchestration layer for LLM pipelines, and the [rust-crates](https://github.com/Mattbusel/rust-crates) index.
