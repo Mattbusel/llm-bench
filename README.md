@@ -88,7 +88,7 @@ Latency comes from the mock's simulated delays, and cost is the built-in price t
 And a real run against two small local models served by [Ollama](https://ollama.com) on this Windows PC (2026-09-25, llm-bench 0.2.2, `--concurrency 1 --max-tokens 128`):
 
 ```
-$ llm-bench run --openai-base-url http://localhost:11434 --models openai:qwen2.5:0.5b,openai:qwen2.5:1.5b     --prompts "Explain Rust in one sentence,Write a haiku about latency" --runs 5 --concurrency 1 --max-tokens 128
+$ llm-bench run --openai-base-url http://localhost:11434 --models openai:qwen2.5:0.5b,openai:qwen2.5:1.5b \n    --prompts "Explain Rust in one sentence,Write a haiku about latency" --runs 5 --concurrency 1 --max-tokens 128
 
 Results: 20 succeeded, 0 failed (100% success rate)
 
