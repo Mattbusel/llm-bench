@@ -54,6 +54,23 @@ fn completion_price_per_1k(model: &str) -> f64 {
     }
 }
 
+/// Whether `model` is in the built-in price table.
+pub fn has_known_price(model: &str) -> bool {
+    supported_models().iter().any(|m| m.model == model)
+        || model == "gpt-4-turbo-preview"
+        || model == "claude-haiku-4-5-20251001"
+}
+
+/// Cost of one request. A model that is not in the price table and is served
+/// from a custom base URL (Ollama, vLLM, a local server) has no meaningful
+/// price, so it is reported as 0.0 and shown as "n/a" rather than guessed.
+fn request_cost(config: &ProviderConfig, prompt_tokens: u32, completion_tokens: u32) -> f64 {
+    if !config.base_url.is_empty() && !has_known_price(&config.model) {
+        return 0.0;
+    }
+    compute_cost(&config.model, prompt_tokens, completion_tokens)
+}
+
 /// Compute the USD cost for a request given token counts.
 pub fn compute_cost(model: &str, prompt_tokens: u32, completion_tokens: u32) -> f64 {
     let p = f64::from(prompt_tokens) * prompt_price_per_1k(model) / 1000.0;
@@ -212,7 +229,7 @@ pub async fn run_openai(
         .map(|u| (u.prompt_tokens, u.completion_tokens))
         .unwrap_or((0, 0));
 
-    let cost_usd = compute_cost(&config.model, prompt_tokens, completion_tokens);
+    let cost_usd = request_cost(config, prompt_tokens, completion_tokens);
     let tokens_per_second = if total_ms > 0 {
         f64::from(completion_tokens) / (total_ms as f64 / 1000.0)
     } else {
@@ -326,7 +343,7 @@ pub async fn run_anthropic(
         .map(|u| (u.input_tokens, u.output_tokens))
         .unwrap_or((0, 0));
 
-    let cost_usd = compute_cost(&config.model, prompt_tokens, completion_tokens);
+    let cost_usd = request_cost(config, prompt_tokens, completion_tokens);
     let tokens_per_second = if total_ms > 0 {
         f64::from(completion_tokens) / (total_ms as f64 / 1000.0)
     } else {
@@ -563,6 +580,27 @@ mod tests {
             .iter()
             .any(|m| m.model == "claude-haiku-4-5");
         assert!(found, "haiku should be in supported models");
+    }
+
+    #[test]
+    fn test_has_known_price() {
+        assert!(has_known_price("gpt-4o-mini"));
+        assert!(has_known_price("claude-haiku-4-5-20251001"));
+        assert!(!has_known_price("qwen2.5:1.5b"));
+    }
+
+    #[test]
+    fn test_request_cost_unpriced_model_on_custom_url_is_zero() {
+        let mut c = openai_config("", "qwen2.5:1.5b");
+        c.base_url = "http://localhost:11434".into();
+        assert_eq!(request_cost(&c, 100, 100), 0.0);
+        // Same model on the official endpoint keeps the fallback estimate.
+        c.base_url = String::new();
+        assert!(request_cost(&c, 100, 100) > 0.0);
+        // A priced model through a proxy is still priced.
+        let mut p = openai_config("", "gpt-4o-mini");
+        p.base_url = "http://proxy:8080".into();
+        assert!(request_cost(&p, 1000, 1000) > 0.0);
     }
 
     //  OpenAI wire mock
