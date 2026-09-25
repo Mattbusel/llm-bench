@@ -131,11 +131,7 @@ async fn run_benchmark(args: cli::RunArgs) -> Result<(), BenchError> {
     println!(
         "\n{} {success} succeeded, {failed} failed ({}% success rate)",
         "Results:".bold(),
-        if total_tasks > 0 {
-            success * 100 / total_tasks
-        } else {
-            0
-        }
+        (success * 100).checked_div(total_tasks).unwrap_or(0)
     );
 
     //  Output

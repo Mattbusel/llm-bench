@@ -284,7 +284,7 @@ mod tests {
     fn test_generate_summary_groups_by_provider_and_model() {
         let results = vec![
             make_result("openai", "gpt-4o-mini", 100, 0.001, 30.0),
-            make_result("anthropic", "claude-3-5-haiku-20241022", 200, 0.002, 50.0),
+            make_result("anthropic", "claude-haiku-4-5", 200, 0.002, 50.0),
         ];
         let summaries = generate_summary(&results);
         assert_eq!(summaries.len(), 2);
@@ -364,7 +364,7 @@ mod tests {
     fn test_generate_summary_is_sorted_by_provider_then_model() {
         let results = vec![
             make_result("openai", "gpt-4o", 100, 0.0, 0.0),
-            make_result("anthropic", "claude-3-5-haiku-20241022", 100, 0.0, 0.0),
+            make_result("anthropic", "claude-haiku-4-5", 100, 0.0, 0.0),
             make_result("openai", "gpt-4o-mini", 100, 0.0, 0.0),
         ];
         let summaries = generate_summary(&results);
@@ -400,7 +400,7 @@ mod tests {
     fn test_print_results_json_is_valid_json() {
         let results = vec![
             make_result("openai", "gpt-4o-mini", 100, 0.001, 40.0),
-            make_result("anthropic", "claude-3-5-haiku-20241022", 200, 0.002, 50.0),
+            make_result("anthropic", "claude-haiku-4-5", 200, 0.002, 50.0),
         ];
         let json = print_results_json(&results).unwrap_or_default();
         let parsed: Result<serde_json::Value, _> = serde_json::from_str(&json);
@@ -412,7 +412,7 @@ mod tests {
         let results = vec![
             make_result("openai", "gpt-4o", 100, 0.01, 30.0),
             make_result("openai", "gpt-4o", 120, 0.01, 32.0),
-            make_result("anthropic", "claude-3-5-haiku-20241022", 90, 0.005, 55.0),
+            make_result("anthropic", "claude-haiku-4-5", 90, 0.005, 55.0),
         ];
         let json = print_results_json(&results).unwrap_or_default();
         let arr: serde_json::Value = serde_json::from_str(&json).unwrap_or_default();
@@ -439,7 +439,7 @@ mod tests {
     fn test_print_table_multiple_rows_does_not_panic() {
         let results = vec![
             make_result("openai", "gpt-4o", 100, 0.01, 30.0),
-            make_result("anthropic", "claude-3-5-haiku-20241022", 200, 0.005, 50.0),
+            make_result("anthropic", "claude-haiku-4-5", 200, 0.005, 50.0),
         ];
         let summaries = generate_summary(&results);
         print_table(&summaries);
