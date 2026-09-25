@@ -83,7 +83,25 @@ Results: 24 succeeded, 0 failed (100% success rate)
 Fastest: gpt-4o-mini (p50 294 ms)   Cheapest: gpt-4o-mini ($0.000023 per request)
 ```
 
-Latency comes from the mock's simulated delays, and cost is the built-in price table applied to the token counts the mock reported. Against the real APIs the same table shows what you actually get from your network, with your prompts, today.
+Latency comes from the mock's simulated delays, and cost is the built-in price table applied to the token counts the mock reported.
+
+And a real run against two small local models served by [Ollama](https://ollama.com) on this Windows PC (2026-09-25, llm-bench 0.2.2, `--concurrency 1 --max-tokens 128`):
+
+```
+$ llm-bench run --openai-base-url http://localhost:11434 --models openai:qwen2.5:0.5b,openai:qwen2.5:1.5b     --prompts "Explain Rust in one sentence,Write a haiku about latency" --runs 5 --concurrency 1 --max-tokens 128
+
+Results: 20 succeeded, 0 failed (100% success rate)
+
+╭──────────┬──────────────┬──────────┬──────────┬───────┬──────────┬────────────┬─────────╮
+│ Provider │ Model        │ P50 (ms) │ P99 (ms) │ Tok/s │ Avg Cost │ Total Cost │ Success │
+├──────────┼──────────────┼──────────┼──────────┼───────┼──────────┼────────────┼─────────┤
+│ openai   │ qwen2.5:0.5b │       54 │      648 │ 371.2 │      n/a │        n/a │    100% │
+│ openai   │ qwen2.5:1.5b │       76 │      131 │ 255.5 │      n/a │        n/a │    100% │
+╰──────────┴──────────────┴──────────┴──────────┴───────┴──────────┴────────────┴─────────╯
+Fastest: qwen2.5:0.5b (p50 54 ms)
+```
+
+The p99 of the 0.5b model is one slow request (648 ms) among fast ones, which is exactly what a p50-only number would hide. Local models have no price, so cost shows `n/a`. Against the real APIs the same table shows what you actually get from your network, with your prompts, today.
 
 What the columns mean:
 
@@ -127,7 +145,7 @@ anthropic   claude-haiku-4-5     $0.001000       $0.005000
 anthropic   claude-opus-5        $0.005000       $0.025000
 ```
 
-Models that are not in the table (for example a local Ollama model) are costed at a flat fallback of $0.002 per 1 000 tokens, so treat their cost column as a placeholder.
+A model that is not in the table shows `n/a` for cost when it is served from a custom base URL (Ollama, vLLM and so on). On the official endpoints an unlisted model is estimated at a flat $0.002 per 1 000 tokens, so treat that cost as a rough placeholder.
 
 ### `llm-bench version` / `--version`
 
@@ -183,7 +201,7 @@ src/
 ## Development
 
 ```bash
-cargo test     # 134 tests; providers run against a local wiremock server, no API keys needed
+cargo test     # 137 tests; providers run against a local wiremock server, no API keys needed
 cargo clippy -- -D warnings
 cargo fmt --check
 ```

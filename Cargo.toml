@@ -2,7 +2,7 @@
 
 [package]
 name = "llm-bench"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2021"
 description = "Send the same prompts to OpenAI, Anthropic or any OpenAI-compatible server and compare p50/p99 latency, tokens per second and cost in one table"
 license = "MIT"

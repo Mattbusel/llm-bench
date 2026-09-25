@@ -204,18 +204,28 @@ pub fn verdict_line(summaries: &[BenchSummary]) -> Option<String> {
         return None;
     }
     let fastest = live.iter().min_by_key(|s| s.p50_latency_ms)?;
-    let cheapest = live
-        .iter()
-        .min_by(|a, b| a.avg_cost_usd.total_cmp(&b.avg_cost_usd))?;
-    Some(format!(
-        "{} {} (p50 {} ms)   {} {} (${:.6} per request)",
+    let mut line = format!(
+        "{} {} (p50 {} ms)",
         "Fastest:".green().bold(),
         fastest.model,
-        fastest.p50_latency_ms,
-        "Cheapest:".green().bold(),
-        cheapest.model,
-        cheapest.avg_cost_usd
-    ))
+        fastest.p50_latency_ms
+    );
+    // Only compare cost between models that have a price.
+    let priced: Vec<&&BenchSummary> = live.iter().filter(|s| s.total_cost_usd > 0.0).collect();
+    if priced.len() >= 2 {
+        if let Some(cheapest) = priced
+            .iter()
+            .min_by(|a, b| a.avg_cost_usd.total_cmp(&b.avg_cost_usd))
+        {
+            line.push_str(&format!(
+                "   {} {} (${:.6} per request)",
+                "Cheapest:".green().bold(),
+                cheapest.model,
+                cheapest.avg_cost_usd
+            ));
+        }
+    }
+    Some(line)
 }
 
 /// Return the value at the given integer percentile from a **sorted** slice.
@@ -273,14 +283,22 @@ pub fn print_table(summaries: &[BenchSummary]) {
             // A model whose every request failed has no numbers to show.
             let dead = s.success_rate == 0.0;
             let cell = |v: String| if dead { "-".to_owned() } else { v };
+            // Unpriced local models report zero cost: say so instead of $0.
+            let money = |v: f64| {
+                if s.total_cost_usd == 0.0 {
+                    cell("n/a".to_owned())
+                } else {
+                    cell(format!("${v:.6}"))
+                }
+            };
             SummaryRow {
                 provider: s.provider.clone(),
                 model: s.model.clone(),
                 p50_ms: cell(format!("{}", s.p50_latency_ms)),
                 p99_ms: cell(format!("{}", s.p99_latency_ms)),
                 tokens_per_sec: cell(format!("{:.1}", s.avg_tokens_per_sec)),
-                avg_cost: cell(format!("${:.6}", s.avg_cost_usd)),
-                total_cost: cell(format!("${:.6}", s.total_cost_usd)),
+                avg_cost: money(s.avg_cost_usd),
+                total_cost: money(s.total_cost_usd),
                 success_rate: format!("{:.0}%", s.success_rate * 100.0),
             }
         })
@@ -398,6 +416,17 @@ mod tests {
         let line = verdict_line(&two).unwrap_or_default();
         assert!(line.contains("a (p50 100 ms)"), "got {line}");
         assert!(line.contains("b ($0.001000"), "got {line}");
+    }
+
+    #[test]
+    fn test_verdict_line_skips_cheapest_for_unpriced_models() {
+        let two = generate_summary(&[
+            make_result("openai", "a", 100, 0.0, 50.0),
+            make_result("openai", "b", 300, 0.0, 50.0),
+        ]);
+        let line = verdict_line(&two).unwrap_or_default();
+        assert!(line.contains("a (p50 100 ms)"), "got {line}");
+        assert!(!line.contains("Cheapest"), "got {line}");
     }
 
     //  percentile_sorted

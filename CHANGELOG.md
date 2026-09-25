@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.2 (2026-09-25)
+
+- Models that are not in the price table and are served from a custom base URL (Ollama, vLLM, LM Studio) now show `n/a` for cost instead of a made-up fallback price, and the "Cheapest" verdict only compares models that have a price.
+- README: a real benchmark of two local Ollama models.
+
 ## 0.2.1 (2026-09-25)
 
 - `--openai-base-url` / `OPENAI_BASE_URL` and `--anthropic-base-url` / `ANTHROPIC_BASE_URL`: benchmark any OpenAI-compatible server (Ollama, vLLM, LM Studio, a proxy). With a custom URL the API key is optional.
