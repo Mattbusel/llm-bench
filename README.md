@@ -1,25 +1,25 @@
 # llm-bench
 
-[![Rust](https://img.shields.io/badge/rust-1.78%2B-orange.svg)](https://www.rust-lang.org)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Crates.io](https://img.shields.io/crates/v/llm-bench.svg)](https://crates.io/crates/llm-bench)
-[![Tests](https://img.shields.io/badge/tests-126%20passing-brightgreen.svg)](#)
+[![CI](https://github.com/Mattbusel/llm-bench/actions/workflows/ci.yml/badge.svg)](https://github.com/Mattbusel/llm-bench/actions/workflows/ci.yml)
 
-**Universal LLM provider benchmark CLI.**
-Compare OpenAI and Anthropic models side-by-side on latency (p50/p99), cost per request, and token throughput - all from a single command.
+A command-line benchmark for LLM APIs: send the same prompts to OpenAI and Anthropic models concurrently and compare p50/p99 latency, tokens per second, cost per request and success rate in one table or JSON file.
+
+Vendor latency numbers rarely match what you see from your own network with your own prompts. `llm-bench` runs your prompts N times against each model with a bounded number of requests in flight, then aggregates the results per model, so you can pick a model on measured speed and cost instead of a pricing page.
 
 ---
 
 ## Installation
 
+Not published on crates.io; install from GitHub:
+
 ```bash
-cargo install llm-bench
+cargo install --git https://github.com/Mattbusel/llm-bench
 ```
 
 Or build from source:
 
 ```bash
-git clone https://github.com/you/llm-bench
+git clone https://github.com/Mattbusel/llm-bench
 cd llm-bench
 cargo build --release
 ./target/release/llm-bench --help
@@ -53,21 +53,23 @@ llm-bench run \
 
 ---
 
-## Example Output
+## Output
+
+A progress bar while requests run, then one row per model. The layout looks like this (values depend entirely on your prompts, network and the providers at the time):
 
 ```
-→ Benchmarking 2 model(s) × 2 prompt(s) × 3 run(s) = 12 total requests
- [00:00:08] [========================================] 12/12 (0s)
-
 Results: 12 succeeded, 0 failed (100% success rate)
 
-+---------------------+------------------------------+----------+----------+-------+------------+------------+---------+
-| Provider | Model | P50 (ms) | P99 (ms) | Tok/s | Avg Cost | Total Cost | Success |
-+---------------------+------------------------------+----------+----------+-------+------------+------------+---------+
-| anthropic | claude-3-5-haiku-20241022 | 812 | 1203 | 78.4 | $0.000184 | $0.001104 | 100% |
-| openai | gpt-4o-mini | 634 | 987 | 92.1 | $0.000023 | $0.000138 | 100% |
-+---------------------+------------------------------+----------+----------+-------+------------+------------+---------+
+| Provider  | Model                     | P50 (ms) | P99 (ms) | Tok/s | Avg Cost | Total Cost | Success |
+| anthropic | claude-3-5-haiku-20241022 |      ... |      ... |   ... |      ... |        ... |     ... |
+| openai    | gpt-4o-mini               |      ... |      ... |   ... |      ... |        ... |     ... |
 ```
+
+- **P50 / P99**: latency percentiles over all runs of that model (full response time; requests are not streamed).
+- **Tok/s**: completion tokens divided by response time, averaged.
+- **Avg / Total Cost**: from the provider's token counts and the built-in price table (`llm-bench models`).
+
+Results are printed when the whole run finishes; Ctrl+C aborts the run without a report.
 
 ---
 
@@ -117,7 +119,7 @@ llm-bench 0.1.0
 Model strings are resolved in order:
 
 1. **Explicit prefix** - `openai:gpt-4o`, `anthropic:claude-3-5-haiku-20241022`
-2. **Auto-detect** - `gpt-*` and `o1*`/`o3*` → OpenAI; `claude-*` → Anthropic
+2. **Auto-detect** - `gpt-*` and `o1*`/`o3*` go to OpenAI; `claude-*` goes to Anthropic
 3. **Error** - anything else; disambiguate with a prefix
 
 ---
@@ -150,14 +152,11 @@ Each element in the output array is a `BenchResult`:
 # Build
 cargo build --release
 
-# Run tests (126 tests)
+# Run tests (126 tests; providers are tested against a local wiremock server, no API keys needed)
 cargo test
 
 # Check lint
 cargo clippy --all-features -- -D warnings
-
-# Ratio check (must be >= 1.5:1)
-# Production LOC: 855 | Test LOC: 1319 | Ratio: 1.543:1
 ```
 
 ---
@@ -177,17 +176,13 @@ src/
 
 ---
 
-## Connection to tokio-prompt-orchestrator
+## Limitations
 
-`llm-bench` is a standalone diagnostic tool for the
-[tokio-prompt-orchestrator](https://github.com/you/tokio-prompt-orchestrator) project.
-Use it to:
-- **Select the fastest model** for a given prompt class before wiring it into the pipeline.
-- **Validate cost envelopes** against the per-stage latency budgets defined in the orchestrator's `ARCHITECTURE.md`.
-- **Regression-test provider SLAs** as part of CI by saving JSON results and diffing percentiles over time.
+- Two providers only (OpenAI Chat Completions and Anthropic Messages). Other OpenAI-compatible endpoints are not configurable yet.
+- The price table is built in and covers six models; update `src/providers.rs` when prices change.
+- `--prompts` splits on commas, so use `--prompt-file` for prompts that contain commas.
+- Each request is a single non-streaming call, so time to first token is not measured separately.
 
 ---
 
-## License
-
-MIT © 2026
+Related: [tokio-prompt-orchestrator](https://github.com/Mattbusel/tokio-prompt-orchestrator), a Rust orchestration layer for LLM pipelines, and the [rust-crates](https://github.com/Mattbusel/rust-crates) index.
