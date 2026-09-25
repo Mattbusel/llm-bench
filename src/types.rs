@@ -153,7 +153,7 @@ mod tests {
 
     #[test]
     fn test_bench_result_serialises_and_deserialises() {
-        let r = sample_result("anthropic", "claude-3-5-haiku-20241022", 200, 0.0002);
+        let r = sample_result("anthropic", "claude-haiku-4-5", 200, 0.0002);
         let json = serde_json::to_string(&r).unwrap_or_default();
         assert!(!json.is_empty(), "serialised JSON should not be empty");
         let restored: Result<BenchResult, _> = serde_json::from_str(&json);
@@ -242,12 +242,12 @@ mod tests {
     fn test_provider_config_fields() {
         let p = ProviderConfig {
             name: "anthropic".into(),
-            model: "claude-3-5-sonnet-20241022".into(),
+            model: "claude-sonnet-5".into(),
             api_key: "sk-ant-test".into(),
             max_tokens: 1024,
         };
         assert_eq!(p.name, "anthropic");
-        assert_eq!(p.model, "claude-3-5-sonnet-20241022");
+        assert_eq!(p.model, "claude-sonnet-5");
         assert_eq!(p.api_key, "sk-ant-test");
         assert_eq!(p.max_tokens, 1024);
     }

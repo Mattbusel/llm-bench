@@ -316,7 +316,7 @@ mod tests {
                 },
                 ProviderConfig {
                     name: "anthropic".into(),
-                    model: "claude-3-5-haiku-20241022".into(),
+                    model: "claude-haiku-4-5".into(),
                     api_key: "k2".into(),
                     max_tokens: 128,
                 },
@@ -366,7 +366,7 @@ mod tests {
         let client = Client::new();
         let provider = ProviderConfig {
             name: "anthropic".into(),
-            model: "claude-3-5-haiku-20241022".into(),
+            model: "claude-haiku-4-5".into(),
             api_key: "k".into(),
             max_tokens: 16,
         };

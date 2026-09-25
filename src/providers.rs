@@ -33,9 +33,9 @@ fn prompt_price_per_1k(model: &str) -> f64 {
         "gpt-4o-mini" => 0.000150,
         "gpt-4-turbo" => 0.010,
         "gpt-4-turbo-preview" => 0.010,
-        "claude-3-5-sonnet-20241022" | "claude-3-5-sonnet-latest" => 0.003,
-        "claude-3-5-haiku-20241022" | "claude-3-5-haiku-latest" => 0.0008,
-        "claude-3-opus-20240229" | "claude-3-opus-latest" => 0.015,
+        "claude-opus-5" => 0.005,
+        "claude-sonnet-5" => 0.002,
+        "claude-haiku-4-5" | "claude-haiku-4-5-20251001" => 0.001,
         _ => 0.002, // conservative fallback
     }
 }
@@ -47,9 +47,9 @@ fn completion_price_per_1k(model: &str) -> f64 {
         "gpt-4o-mini" => 0.000600,
         "gpt-4-turbo" => 0.030,
         "gpt-4-turbo-preview" => 0.030,
-        "claude-3-5-sonnet-20241022" | "claude-3-5-sonnet-latest" => 0.015,
-        "claude-3-5-haiku-20241022" | "claude-3-5-haiku-latest" => 0.004,
-        "claude-3-opus-20240229" | "claude-3-opus-latest" => 0.075,
+        "claude-opus-5" => 0.025,
+        "claude-sonnet-5" => 0.010,
+        "claude-haiku-4-5" | "claude-haiku-4-5-20251001" => 0.005,
         _ => 0.002, // conservative fallback
     }
 }
@@ -379,21 +379,21 @@ pub fn supported_models() -> Vec<ModelInfo> {
         },
         ModelInfo {
             provider: "anthropic",
-            model: "claude-3-5-sonnet-20241022",
-            prompt_per_1k: 0.003,
-            completion_per_1k: 0.015,
+            model: "claude-sonnet-5",
+            prompt_per_1k: 0.002,
+            completion_per_1k: 0.010,
         },
         ModelInfo {
             provider: "anthropic",
-            model: "claude-3-5-haiku-20241022",
-            prompt_per_1k: 0.0008,
-            completion_per_1k: 0.004,
+            model: "claude-haiku-4-5",
+            prompt_per_1k: 0.001,
+            completion_per_1k: 0.005,
         },
         ModelInfo {
             provider: "anthropic",
-            model: "claude-3-opus-20240229",
-            prompt_per_1k: 0.015,
-            completion_per_1k: 0.075,
+            model: "claude-opus-5",
+            prompt_per_1k: 0.005,
+            completion_per_1k: 0.025,
         },
     ]
 }
@@ -436,15 +436,15 @@ mod tests {
 
     #[test]
     fn test_compute_cost_claude_haiku_known_values() {
-        let cost = compute_cost("claude-3-5-haiku-20241022", 1000, 1000);
-        let expected = 0.0008 + 0.004; // 0.0048
+        let cost = compute_cost("claude-haiku-4-5", 1000, 1000);
+        let expected = 0.001 + 0.005; // 0.006
         assert!((cost - expected).abs() < 1e-9);
     }
 
     #[test]
     fn test_compute_cost_claude_opus_known_values() {
-        let cost = compute_cost("claude-3-opus-20240229", 1000, 1000);
-        let expected = 0.015 + 0.075;
+        let cost = compute_cost("claude-opus-5", 1000, 1000);
+        let expected = 0.005 + 0.025;
         assert!((cost - expected).abs() < 1e-9);
     }
 
@@ -499,18 +499,18 @@ mod tests {
 
     #[test]
     fn test_prompt_price_claude_sonnet() {
-        assert!((prompt_price_per_1k("claude-3-5-sonnet-20241022") - 0.003).abs() < 1e-9);
+        assert!((prompt_price_per_1k("claude-sonnet-5") - 0.002).abs() < 1e-9);
     }
 
     #[test]
     fn test_completion_price_claude_sonnet() {
-        assert!((completion_price_per_1k("claude-3-5-sonnet-20241022") - 0.015).abs() < 1e-9);
+        assert!((completion_price_per_1k("claude-sonnet-5") - 0.010).abs() < 1e-9);
     }
 
     #[test]
     fn test_prompt_price_latest_alias_equals_dated() {
-        let dated = prompt_price_per_1k("claude-3-5-sonnet-20241022");
-        let latest = prompt_price_per_1k("claude-3-5-sonnet-latest");
+        let dated = prompt_price_per_1k("claude-haiku-4-5-20251001");
+        let latest = prompt_price_per_1k("claude-haiku-4-5");
         assert!(
             (dated - latest).abs() < 1e-9,
             "aliases should have same price"
@@ -561,7 +561,7 @@ mod tests {
     fn test_supported_models_contains_claude_haiku() {
         let found = supported_models()
             .iter()
-            .any(|m| m.model == "claude-3-5-haiku-20241022");
+            .any(|m| m.model == "claude-haiku-4-5");
         assert!(found, "haiku should be in supported models");
     }
 
@@ -729,7 +729,7 @@ mod tests {
             .await;
 
         let client = Client::new();
-        let config = anthropic_config("ant-key", "claude-3-5-haiku-20241022");
+        let config = anthropic_config("ant-key", "claude-haiku-4-5");
         let result = run_anthropic(&client, &config, &server.uri(), "Hi", 0).await;
 
         assert!(result.is_ok(), "expected Ok, got: {result:?}");
@@ -752,7 +752,7 @@ mod tests {
             .await;
 
         let client = Client::new();
-        let config = anthropic_config("bad-key", "claude-3-5-haiku-20241022");
+        let config = anthropic_config("bad-key", "claude-haiku-4-5");
         let result = run_anthropic(&client, &config, &server.uri(), "hi", 0).await;
 
         assert!(result.is_err());
@@ -773,7 +773,7 @@ mod tests {
             .await;
 
         let client = Client::new();
-        let config = anthropic_config("ant-key", "claude-3-5-haiku-20241022");
+        let config = anthropic_config("ant-key", "claude-haiku-4-5");
         let result = run_anthropic(&client, &config, &server.uri(), "hi", 0).await;
 
         assert!(result.is_err());
@@ -800,7 +800,7 @@ mod tests {
             .await;
 
         let client = Client::new();
-        let config = anthropic_config("ant-key", "claude-3-5-haiku-20241022");
+        let config = anthropic_config("ant-key", "claude-haiku-4-5");
         let result = run_anthropic(&client, &config, &server.uri(), "tell me", 0).await;
 
         assert!(result.is_ok());
@@ -825,7 +825,7 @@ mod tests {
             .await;
 
         let client = Client::new();
-        let config = anthropic_config("ant-key", "claude-3-5-haiku-20241022");
+        let config = anthropic_config("ant-key", "claude-haiku-4-5");
         let result = run_anthropic(&client, &config, &server.uri(), "use tool", 0).await;
 
         assert!(result.is_ok());
@@ -846,7 +846,7 @@ mod tests {
             .await;
 
         let client = Client::new();
-        let config = anthropic_config("ant-key", "claude-3-5-haiku-20241022");
+        let config = anthropic_config("ant-key", "claude-haiku-4-5");
         let result = run_anthropic(&client, &config, &server.uri(), "hi", 0).await;
 
         assert!(result.is_ok());
@@ -869,7 +869,7 @@ mod tests {
             .await;
 
         let client = Client::new();
-        let config = anthropic_config("ant-key", "claude-3-5-haiku-20241022");
+        let config = anthropic_config("ant-key", "claude-haiku-4-5");
         let result = run_anthropic(&client, &config, &server.uri(), "prompt", 0).await;
 
         assert!(result.is_ok());

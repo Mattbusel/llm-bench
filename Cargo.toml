@@ -2,10 +2,13 @@
 
 [package]
 name = "llm-bench"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
-description = "Universal LLM provider benchmark CLI  -  compare OpenAI and Anthropic on latency, cost, quality, and throughput"
+description = "LLM provider benchmark CLI: compare OpenAI and Anthropic on latency, cost, quality, and throughput"
 license = "MIT"
+repository = "https://github.com/Mattbusel/llm-bench"
+homepage = "https://github.com/Mattbusel/llm-bench"
+readme = "README.md"
 keywords = ["llm", "benchmark", "openai", "anthropic", "cli"]
 categories = ["command-line-utilities", "development-tools"]
 

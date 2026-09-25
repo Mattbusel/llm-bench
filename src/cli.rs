@@ -66,12 +66,12 @@ pub struct RunArgs {
 
     /// Comma-separated list of model identifiers to benchmark.
     ///
-    /// Prefix with provider: `openai:gpt-4o-mini` or `anthropic:claude-3-5-haiku-20241022`.
+    /// Prefix with provider: `openai:gpt-4o-mini` or `anthropic:claude-haiku-4-5`.
     /// Bare names (no prefix) are matched against known models automatically.
     #[arg(
         long,
         value_delimiter = ',',
-        default_value = "gpt-4o-mini,claude-3-5-haiku-20241022"
+        default_value = "gpt-4o-mini,claude-haiku-4-5"
     )]
     pub models: Vec<String>,
 
@@ -204,7 +204,7 @@ pub fn build_config(args: &RunArgs) -> Result<BenchConfig, BenchError> {
 ///
 /// Accepts:
 /// - `"openai:gpt-4o-mini"` → `("openai", "gpt-4o-mini")`
-/// - `"anthropic:claude-3-5-haiku-20241022"` → `("anthropic", "claude-3-5-haiku-20241022")`
+/// - `"anthropic:claude-haiku-4-5"` → `("anthropic", "claude-haiku-4-5")`
 /// - Bare names are matched against known model prefixes.
 ///
 /// # Panics
@@ -250,10 +250,9 @@ mod tests {
 
     #[test]
     fn test_resolve_model_anthropic_prefix() {
-        let (provider, model) =
-            resolve_model("anthropic:claude-3-5-haiku-20241022").unwrap_or(("", ""));
+        let (provider, model) = resolve_model("anthropic:claude-haiku-4-5").unwrap_or(("", ""));
         assert_eq!(provider, "anthropic");
-        assert_eq!(model, "claude-3-5-haiku-20241022");
+        assert_eq!(model, "claude-haiku-4-5");
     }
 
     #[test]
@@ -265,9 +264,9 @@ mod tests {
 
     #[test]
     fn test_resolve_model_bare_claude_autodetects_anthropic() {
-        let (provider, model) = resolve_model("claude-3-5-haiku-20241022").unwrap_or(("", ""));
+        let (provider, model) = resolve_model("claude-haiku-4-5").unwrap_or(("", ""));
         assert_eq!(provider, "anthropic");
-        assert_eq!(model, "claude-3-5-haiku-20241022");
+        assert_eq!(model, "claude-haiku-4-5");
     }
 
     #[test]
@@ -328,7 +327,7 @@ mod tests {
 
     #[test]
     fn test_build_config_anthropic_model_produces_anthropic_provider() {
-        let args = minimal_run_args("claude-3-5-haiku-20241022", "anthropic", "sk-ant-test");
+        let args = minimal_run_args("claude-haiku-4-5", "anthropic", "sk-ant-test");
         let config = build_config(&args);
         assert!(config.is_ok());
         let config = config.unwrap_or_else(|_| unreachable!());
@@ -398,7 +397,7 @@ mod tests {
         let args = RunArgs {
             openai_key: None,
             anthropic_key: None,
-            models: vec!["claude-3-5-haiku-20241022".into()],
+            models: vec!["claude-haiku-4-5".into()],
             prompts: vec!["hello".into()],
             prompt_file: None,
             runs: 1,
@@ -434,7 +433,7 @@ mod tests {
         let args = RunArgs {
             openai_key: Some("sk-openai".into()),
             anthropic_key: Some("sk-ant".into()),
-            models: vec!["gpt-4o-mini".into(), "claude-3-5-haiku-20241022".into()],
+            models: vec!["gpt-4o-mini".into(), "claude-haiku-4-5".into()],
             prompts: vec!["hello".into()],
             prompt_file: None,
             runs: 1,
