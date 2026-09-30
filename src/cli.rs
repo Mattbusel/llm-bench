@@ -20,6 +20,21 @@ use clap::{Parser, Subcommand, ValueEnum};
 use crate::error::BenchError;
 use crate::types::{BenchConfig, ProviderConfig};
 
+/// Examples shown at the bottom of `llm-bench --help`.
+const HELP_EXAMPLES: &str = "Examples:
+  llm-bench models
+      List the models llm-bench knows prices for.
+
+  export OPENAI_API_KEY=sk-...   (PowerShell: $env:OPENAI_API_KEY=\"sk-...\")
+  llm-bench run --models gpt-4o-mini --prompts \"Say hi\"
+      One model, one prompt, 3 runs, results table.
+
+  llm-bench run --models gpt-4o-mini,claude-haiku-4-5 --prompt-file prompts.txt --runs 5
+      Compare two providers on your own prompts.
+
+  llm-bench run --openai-base-url http://localhost:11434 --models openai:llama3.2 --prompts \"Say hi\"
+      Any OpenAI-compatible server (Ollama, vLLM, LM Studio); no key needed.";
+
 //  Top-level CLI
 
 /// Universal LLM provider benchmark CLI.
@@ -31,7 +46,8 @@ use crate::types::{BenchConfig, ProviderConfig};
     name = "llm-bench",
     version,
     about = "Benchmark OpenAI and Anthropic models on latency, cost, and throughput",
-    long_about = None
+    long_about = None,
+    after_help = HELP_EXAMPLES
 )]
 pub struct Cli {
     #[command(subcommand)]
@@ -40,6 +56,7 @@ pub struct Cli {
 
 /// Available sub-commands.
 #[derive(Debug, Subcommand)]
+#[allow(clippy::large_enum_variant)]
 pub enum Command {
     /// Run a benchmark against configured providers and models.
     Run(RunArgs),
@@ -63,6 +80,16 @@ pub struct RunArgs {
     /// Anthropic API key. Falls back to ANTHROPIC_API_KEY environment variable.
     #[arg(long, env = "ANTHROPIC_API_KEY", hide_env_values = true)]
     pub anthropic_key: Option<String>,
+
+    /// Base URL of an OpenAI-compatible API (Ollama, vLLM, LM Studio, a proxy).
+    /// Accepts either `http://host:port` or `http://host:port/v1`. When set,
+    /// an API key is optional.
+    #[arg(long, env = "OPENAI_BASE_URL")]
+    pub openai_base_url: Option<String>,
+
+    /// Base URL for the Anthropic Messages API (for proxies or gateways).
+    #[arg(long, env = "ANTHROPIC_BASE_URL")]
+    pub anthropic_base_url: Option<String>,
 
     /// Comma-separated list of model identifiers to benchmark.
     ///
@@ -159,9 +186,21 @@ pub fn build_config(args: &RunArgs) -> Result<BenchConfig, BenchError> {
 
         let (provider_name, model) = resolve_model(model_str)?;
 
-        let api_key = match provider_name {
-            "openai" => args.openai_key.as_deref().unwrap_or("").to_owned(),
-            "anthropic" => args.anthropic_key.as_deref().unwrap_or("").to_owned(),
+        let (api_key, base_url, env_var) = match provider_name {
+            "openai" => (
+                args.openai_key.as_deref().unwrap_or("").trim().to_owned(),
+                normalize_base_url(args.openai_base_url.as_deref()),
+                "OPENAI_API_KEY",
+            ),
+            "anthropic" => (
+                args.anthropic_key
+                    .as_deref()
+                    .unwrap_or("")
+                    .trim()
+                    .to_owned(),
+                normalize_base_url(args.anthropic_base_url.as_deref()),
+                "ANTHROPIC_API_KEY",
+            ),
             other => {
                 return Err(BenchError::InvalidConfig {
                     reason: format!("unknown provider '{other}'"),
@@ -169,11 +208,14 @@ pub fn build_config(args: &RunArgs) -> Result<BenchConfig, BenchError> {
             }
         };
 
-        if api_key.is_empty() {
+        // Official endpoints need a key; a custom base URL (local server,
+        // proxy) may not.
+        if api_key.is_empty() && base_url.is_empty() {
             return Err(BenchError::InvalidConfig {
                 reason: format!(
-                    "No API key for provider '{provider_name}'. \
-                     Pass --{provider_name}-key or set the environment variable."
+                    "no API key for {provider_name} (needed for model '{model}').\n  \
+                     Fix: set {env_var} (bash: export {env_var}=...  PowerShell: $env:{env_var}=\"...\")\n  \
+                     or pass --{provider_name}-key <KEY>, or leave '{model}' out of --models."
                 ),
             });
         }
@@ -182,6 +224,7 @@ pub fn build_config(args: &RunArgs) -> Result<BenchConfig, BenchError> {
             name: provider_name.to_owned(),
             model: model.to_owned(),
             api_key,
+            base_url,
             max_tokens: args.max_tokens,
         });
     }
@@ -198,6 +241,20 @@ pub fn build_config(args: &RunArgs) -> Result<BenchConfig, BenchError> {
         concurrency: args.concurrency,
         providers,
     })
+}
+
+/// Normalise a user-supplied base URL: trim whitespace, trailing slashes and a
+/// trailing `/v1`, because the providers append `/v1/...` themselves.
+/// `None` or blank input yields an empty string (meaning "official URL").
+///
+/// # Panics
+/// This function never panics.
+fn normalize_base_url(raw: Option<&str>) -> String {
+    let mut s = raw.unwrap_or("").trim().trim_end_matches('/').to_owned();
+    if s.ends_with("/v1") {
+        s.truncate(s.len() - 3);
+    }
+    s.trim_end_matches('/').to_owned()
 }
 
 /// Resolve a model string to `(provider_name, model_id)`.
@@ -287,6 +344,41 @@ mod tests {
     }
 
     #[test]
+    fn test_normalize_base_url_strips_v1_and_slashes() {
+        assert_eq!(
+            normalize_base_url(Some("http://localhost:11434/v1/")),
+            "http://localhost:11434"
+        );
+        assert_eq!(normalize_base_url(Some(" http://x:1/ ")), "http://x:1");
+        assert_eq!(normalize_base_url(None), "");
+        assert_eq!(normalize_base_url(Some("   ")), "");
+    }
+
+    #[test]
+    fn test_build_config_custom_base_url_allows_missing_key() {
+        let mut args = minimal_run_args("openai:llama3.2", "openai", "");
+        args.openai_key = None;
+        args.openai_base_url = Some("http://127.0.0.1:8099/v1".into());
+        let config = build_config(&args);
+        assert!(config.is_ok(), "expected Ok: {config:?}");
+        let config = config.unwrap_or_else(|_| unreachable!());
+        assert_eq!(config.providers[0].base_url, "http://127.0.0.1:8099");
+        assert!(config.providers[0].api_key.is_empty());
+    }
+
+    #[test]
+    fn test_build_config_missing_key_error_says_how_to_fix() {
+        let mut args = minimal_run_args("gpt-4o-mini", "openai", "");
+        args.openai_key = None;
+        let err = build_config(&args)
+            .err()
+            .map(|e| e.to_string())
+            .unwrap_or_default();
+        assert!(err.contains("OPENAI_API_KEY"), "got: {err}");
+        assert!(err.contains("--openai-key"), "got: {err}");
+    }
+
+    #[test]
     fn test_resolve_model_empty_string_returns_error() {
         let result = resolve_model("");
         assert!(result.is_err());
@@ -303,6 +395,8 @@ mod tests {
         RunArgs {
             openai_key,
             anthropic_key,
+            openai_base_url: None,
+            anthropic_base_url: None,
             models: vec![model.to_owned()],
             prompts: vec!["Say hi".to_owned()],
             prompt_file: None,
@@ -353,6 +447,8 @@ mod tests {
         let args = RunArgs {
             openai_key: Some("sk-test".into()),
             anthropic_key: None,
+            openai_base_url: None,
+            anthropic_base_url: None,
             models: vec!["gpt-4o-mini".into()],
             prompts: vec![],
             prompt_file: None,
@@ -375,6 +471,8 @@ mod tests {
         let args = RunArgs {
             openai_key: None,
             anthropic_key: None,
+            openai_base_url: None,
+            anthropic_base_url: None,
             models: vec!["gpt-4o-mini".into()],
             prompts: vec!["hello".into()],
             prompt_file: None,
@@ -397,6 +495,8 @@ mod tests {
         let args = RunArgs {
             openai_key: None,
             anthropic_key: None,
+            openai_base_url: None,
+            anthropic_base_url: None,
             models: vec!["claude-haiku-4-5".into()],
             prompts: vec!["hello".into()],
             prompt_file: None,
@@ -415,6 +515,8 @@ mod tests {
         let args = RunArgs {
             openai_key: Some("sk-test".into()),
             anthropic_key: None,
+            openai_base_url: None,
+            anthropic_base_url: None,
             models: vec!["openai:gpt-4o".into()],
             prompts: vec!["test".into()],
             prompt_file: None,
@@ -433,6 +535,8 @@ mod tests {
         let args = RunArgs {
             openai_key: Some("sk-openai".into()),
             anthropic_key: Some("sk-ant".into()),
+            openai_base_url: None,
+            anthropic_base_url: None,
             models: vec!["gpt-4o-mini".into(), "claude-haiku-4-5".into()],
             prompts: vec!["hello".into()],
             prompt_file: None,
@@ -458,6 +562,8 @@ mod tests {
         let args = RunArgs {
             openai_key: Some("sk-test".into()),
             anthropic_key: None,
+            openai_base_url: None,
+            anthropic_base_url: None,
             models: vec!["gpt-4o-mini".into()],
             prompts: vec![],
             prompt_file: Some(PathBuf::from("/nonexistent/path/prompts.txt")),
@@ -495,6 +601,8 @@ mod tests {
         let args = RunArgs {
             openai_key: Some("sk-test".into()),
             anthropic_key: None,
+            openai_base_url: None,
+            anthropic_base_url: None,
             models: vec!["gpt-4o-mini".into()],
             prompts: vec![],
             prompt_file: Some(path.clone()),

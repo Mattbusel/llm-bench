@@ -24,7 +24,12 @@ use tracing::{debug, instrument};
 
 use crate::error::BenchError;
 use crate::providers::{run_anthropic, run_openai};
-use crate::types::{BenchConfig, BenchResult, ProviderConfig};
+use crate::types::{BenchConfig, BenchFailure, BenchResult, ProviderConfig};
+
+/// Official OpenAI API base URL (used when no `--openai-base-url` is given).
+pub const DEFAULT_OPENAI_BASE_URL: &str = "https://api.openai.com";
+/// Official Anthropic API base URL.
+pub const DEFAULT_ANTHROPIC_BASE_URL: &str = "https://api.anthropic.com";
 
 //  Runner
 
@@ -48,23 +53,19 @@ impl BenchRunner {
 
     /// Run the full benchmark suite described by `config`.
     ///
-    /// Returns a flat list of results  -  one per (provider, prompt, run_index)
-    /// triple.  Results for failed calls are omitted; callers should compute
-    /// success_rate from the expected vs. actual count.
-    ///
-    /// # Arguments
-    /// * `config`     -  benchmark parameters
-    /// * `on_progress`  -  callback invoked after each task completes; receives
-    ///   `(completed, total)`.
+    /// Returns the successful results (one per provider, prompt and run)
+    /// and one [`BenchFailure`] per request that failed, so callers can
+    /// report real success rates. `on_progress` is invoked after each task
+    /// completes with `(completed, total)`.
     ///
     /// # Panics
     /// This function never panics.
     #[instrument(skip(self, config, on_progress))]
-    pub async fn run<F>(
+    pub async fn run_detailed<F>(
         &self,
         config: &BenchConfig,
         on_progress: F,
-    ) -> Result<Vec<BenchResult>, BenchError>
+    ) -> Result<(Vec<BenchResult>, Vec<BenchFailure>), BenchError>
     where
         F: Fn(usize, usize) + Send + Sync + 'static,
     {
@@ -106,7 +107,11 @@ impl BenchRunner {
                     let n = done.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
                     cb(n, total);
 
-                    result
+                    Ok::<_, BenchError>(result.map_err(|e| BenchFailure {
+                        provider: provider.name.clone(),
+                        model: provider.model.clone(),
+                        error: e.to_string(),
+                    }))
                 })
             })
             .collect();
@@ -114,12 +119,17 @@ impl BenchRunner {
         let join_results = join_all(futures).await;
 
         let mut results = Vec::with_capacity(join_results.len());
+        let mut failures = Vec::new();
         for jr in join_results {
             match jr {
-                Ok(Ok(r)) => results.push(r),
+                Ok(Ok(Ok(r))) => results.push(r),
+                Ok(Ok(Err(f))) => {
+                    // Keep provider errors for the report; don't abort the run
+                    debug!(error = %f.error, "benchmark task returned error");
+                    failures.push(f);
+                }
                 Ok(Err(e)) => {
-                    // Log provider errors but don't abort the whole run
-                    tracing::warn!(error = %e, "benchmark task returned error");
+                    return Err(e);
                 }
                 Err(e) => {
                     return Err(BenchError::Concurrency {
@@ -129,7 +139,7 @@ impl BenchRunner {
             }
         }
 
-        Ok(results)
+        Ok((results, failures))
     }
 }
 
@@ -140,17 +150,21 @@ async fn dispatch_call(
     prompt: &str,
     run_idx: u32,
 ) -> Result<BenchResult, BenchError> {
+    let base = |default: &'static str| -> String {
+        if provider.base_url.is_empty() {
+            default.to_owned()
+        } else {
+            provider.base_url.clone()
+        }
+    };
     match provider.name.as_str() {
-        "openai" => run_openai(client, provider, "https://api.openai.com", prompt, run_idx).await,
+        "openai" => {
+            let url = base(DEFAULT_OPENAI_BASE_URL);
+            run_openai(client, provider, &url, prompt, run_idx).await
+        }
         "anthropic" => {
-            run_anthropic(
-                client,
-                provider,
-                "https://api.anthropic.com",
-                prompt,
-                run_idx,
-            )
-            .await
+            let url = base(DEFAULT_ANTHROPIC_BASE_URL);
+            run_anthropic(client, provider, &url, prompt, run_idx).await
         }
         other => Err(BenchError::InvalidConfig {
             reason: format!("unknown provider '{other}'; supported: openai, anthropic"),
@@ -177,6 +191,7 @@ mod tests {
             name: "openai".into(),
             model: "gpt-4o-mini".into(),
             api_key: "test-key".into(),
+            base_url: String::new(),
             max_tokens: 32,
         }
     }
@@ -198,6 +213,7 @@ mod tests {
             name: "unknown-provider".into(),
             model: "model-x".into(),
             api_key: "key".into(),
+            base_url: String::new(),
             max_tokens: 32,
         };
         let result = dispatch_call(&client, &provider, "hello", 0).await;
@@ -235,7 +251,10 @@ mod tests {
             concurrency: 4,
             providers: vec![], // no providers → no tasks
         };
-        let results = runner.run(&config, |_, _| {}).await;
+        let results = runner
+            .run_detailed(&config, |_, _| {})
+            .await
+            .map(|(r, _)| r);
         assert!(results.is_ok());
         assert!(results.unwrap_or_default().is_empty());
     }
@@ -249,7 +268,10 @@ mod tests {
             concurrency: 4,
             providers: vec![openai_provider("")],
         };
-        let results = runner.run(&config, |_, _| {}).await;
+        let results = runner
+            .run_detailed(&config, |_, _| {})
+            .await
+            .map(|(r, _)| r);
         assert!(results.is_ok());
         assert!(results.unwrap_or_default().is_empty());
     }
@@ -312,12 +334,14 @@ mod tests {
                     name: "openai".into(),
                     model: "gpt-4o-mini".into(),
                     api_key: "k1".into(),
+                    base_url: String::new(),
                     max_tokens: 128,
                 },
                 ProviderConfig {
                     name: "anthropic".into(),
                     model: "claude-haiku-4-5".into(),
                     api_key: "k2".into(),
+                    base_url: String::new(),
                     max_tokens: 128,
                 },
             ],
@@ -343,6 +367,7 @@ mod tests {
             name: "openai".into(),
             model: "gpt-4o-mini".into(),
             api_key: "k".into(),
+            base_url: String::new(),
             max_tokens: 16,
         };
         // Direct call to run_openai with mock base URL
@@ -368,10 +393,53 @@ mod tests {
             name: "anthropic".into(),
             model: "claude-haiku-4-5".into(),
             api_key: "k".into(),
+            base_url: String::new(),
             max_tokens: 16,
         };
         let result = run_anthropic(&client, &provider, &server.uri(), "hi", 0).await;
         assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_run_detailed_uses_custom_base_url_and_counts_failures() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "choices": [{"message": {"role": "assistant", "content": "ok"}}],
+                "usage": {"prompt_tokens": 4, "completion_tokens": 2}
+            })))
+            .mount(&server)
+            .await;
+
+        let good = ProviderConfig {
+            name: "openai".into(),
+            model: "local-model".into(),
+            api_key: String::new(),
+            base_url: server.uri(),
+            max_tokens: 16,
+        };
+        let bad = ProviderConfig {
+            name: "anthropic".into(),
+            model: "claude-haiku-4-5".into(),
+            api_key: String::new(),
+            base_url: server.uri(), // no /v1/messages mock: 404
+            max_tokens: 16,
+        };
+        let config = BenchConfig {
+            prompts: vec!["hi".into()],
+            runs_per_prompt: 2,
+            concurrency: 2,
+            providers: vec![good, bad],
+        };
+        let runner = BenchRunner::new().unwrap_or_else(|_| unreachable!());
+        let (results, failures) = runner
+            .run_detailed(&config, |_, _| {})
+            .await
+            .unwrap_or_default();
+        assert_eq!(results.len(), 2);
+        assert_eq!(failures.len(), 2);
+        assert!(failures.iter().all(|f| f.error.contains("404")));
     }
 
     //  Atomic progress tracking

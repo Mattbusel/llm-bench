@@ -50,6 +50,18 @@ pub struct BenchResult {
     pub run_index: u32,
 }
 
+/// One request that failed, kept so the report can show real success rates
+/// and tell the user why requests failed.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BenchFailure {
+    /// Provider name.
+    pub provider: String,
+    /// Model identifier.
+    pub model: String,
+    /// Human-readable error message.
+    pub error: String,
+}
+
 //  Benchmark configuration
 
 /// Top-level configuration for a benchmark run.
@@ -77,8 +89,13 @@ pub struct ProviderConfig {
     /// Model identifier string sent verbatim to the API.
     pub model: String,
 
-    /// Bearer API key for this provider.
+    /// Bearer API key for this provider. May be empty for local
+    /// OpenAI-compatible servers that do not check keys.
     pub api_key: String,
+
+    /// API base URL without the `/v1` suffix, e.g. `https://api.openai.com`
+    /// or `http://localhost:11434`. Empty means the provider's official URL.
+    pub base_url: String,
 
     /// Maximum completion tokens to request.
     pub max_tokens: u32,
@@ -197,6 +214,7 @@ mod tests {
                 name: "openai".into(),
                 model: "gpt-4o-mini".into(),
                 api_key: "sk-test".into(),
+                base_url: String::new(),
                 max_tokens: 512,
             }],
         }
@@ -244,6 +262,7 @@ mod tests {
             name: "anthropic".into(),
             model: "claude-sonnet-5".into(),
             api_key: "sk-ant-test".into(),
+            base_url: String::new(),
             max_tokens: 1024,
         };
         assert_eq!(p.name, "anthropic");
