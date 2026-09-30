@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/Mattbusel/llm-bench/main/assets/banner.png" alt="llm-bench: send the same prompts to several models and compare p50/p99 latency, tokens per second and cost" width="100%">
+  <img src="https://gitlab.com/mattbusel/llm-bench/-/raw/main/assets/banner.png" alt="llm-bench: send the same prompts to several models and compare p50/p99 latency, tokens per second and cost" width="100%">
 </p>
 
 # llm-bench
@@ -9,21 +9,21 @@
 It sends the same prompts to several models at once (OpenAI, Anthropic, or any OpenAI-compatible server such as Ollama, vLLM or LM Studio) and prints one table: p50/p99 latency, tokens per second, cost per request and success rate.
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/Mattbusel/llm-bench/main/assets/demo.gif" alt="llm-bench models, then llm-bench run comparing gpt-4o-mini, gpt-4o and claude-haiku-4-5 with a live progress bar and a results table" width="100%">
+  <img src="https://gitlab.com/mattbusel/llm-bench/-/raw/main/assets/demo.gif" alt="llm-bench models, then llm-bench run comparing gpt-4o-mini, gpt-4o and claude-haiku-4-5 with a live progress bar and a results table" width="100%">
 </p>
-<p align="center"><sub>Real recording of llm-bench 0.2.1 on 2026-09-25. It is pointed at the bundled <a href="https://github.com/Mattbusel/llm-bench/blob/main/scripts/mock_server.py">local mock server</a> (canned replies, simulated latency), so no API keys were used and the numbers are not real model speeds.</sub></p>
+<p align="center"><sub>Real recording of llm-bench 0.2.1 on 2026-09-25. It is pointed at the bundled <a href="https://gitlab.com/mattbusel/llm-bench/-/blob/main/scripts/mock_server.py">local mock server</a> (canned replies, simulated latency), so no API keys were used and the numbers are not real model speeds.</sub></p>
 
 ## Install
 
 | Platform | Command |
 |----------|---------|
-| Windows (PowerShell) | `irm https://raw.githubusercontent.com/Mattbusel/llm-bench/main/install.ps1 \| iex` |
-| macOS / Linux | `curl -fsSL https://raw.githubusercontent.com/Mattbusel/llm-bench/main/install.sh \| sh` |
+| Windows (PowerShell) | `irm https://gitlab.com/mattbusel/llm-bench/-/raw/main/install.ps1 \| iex` |
+| macOS / Linux | `curl -fsSL https://gitlab.com/mattbusel/llm-bench/-/raw/main/install.sh \| sh` |
 | Homebrew | `brew install mattbusel/tap/llm-bench` |
-| Scoop | `scoop bucket add mattbusel https://github.com/Mattbusel/scoop-bucket` then `scoop install llm-bench` |
+| Scoop | `scoop bucket add mattbusel https://gitlab.com/mattbusel/scoop-bucket` then `scoop install llm-bench` |
 | Rust, prebuilt | `cargo binstall llm-bench` |
 | Rust, from source | `cargo install llm-bench` |
-| Manual | Download a zip or tarball from [Releases](https://github.com/Mattbusel/llm-bench/releases/latest) (Windows, macOS Intel and Apple Silicon, Linux x86_64) |
+| Manual | Download a zip or tarball from [Releases](https://gitlab.com/mattbusel/llm-bench/-/releases) (Windows, macOS Intel and Apple Silicon, Linux x86_64) |
 
 The scripts verify the download against the release's `SHA256SUMS.txt`. The Windows script installs to `%LOCALAPPDATA%\Programs\llm-bench` and adds it to your user PATH; the shell script installs to `~/.local/bin`. The binaries are not code-signed: Windows SmartScreen may say "unknown publisher" (More info, then Run anyway), and on macOS a manually downloaded file may need `xattr -d com.apple.quarantine llm-bench`.
 
@@ -207,4 +207,4 @@ cargo clippy -- -D warnings
 cargo fmt --check
 ```
 
-MIT licensed. Related: [tokio-prompt-orchestrator](https://github.com/Mattbusel/tokio-prompt-orchestrator), a Rust orchestration layer for LLM pipelines, and the [rust-crates](https://github.com/Mattbusel/rust-crates) index.
+MIT licensed. Related: [tokio-prompt-orchestrator](https://gitlab.com/mattbusel/tokio-prompt-orchestrator), a Rust orchestration layer for LLM pipelines, and the [rust-crates](https://gitlab.com/mattbusel/rust-crates) index.

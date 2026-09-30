@@ -9,7 +9,7 @@ NestedInstallerFiles:
 ReleaseDate: 2026-09-26
 Installers:
   - Architecture: x64
-    InstallerUrl: https://github.com/Mattbusel/llm-bench/releases/download/v0.2.2/llm-bench-v0.2.2-x86_64-pc-windows-msvc.zip
+    InstallerUrl: https://gitlab.com/mattbusel/llm-bench/-/releases
     InstallerSha256: 88266A4FC0551F1A291B8ADFC40DFFA48CB82573AB5E3481DDD4DA18ADF10C85
 ManifestType: installer
 ManifestVersion: 1.6.0

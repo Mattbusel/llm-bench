@@ -3,13 +3,13 @@ PackageIdentifier: Mattbusel.LlmBench
 PackageVersion: 0.2.2
 PackageLocale: en-US
 Publisher: Mattbusel
-PublisherUrl: https://github.com/Mattbusel
-PublisherSupportUrl: https://github.com/Mattbusel/llm-bench/issues
+PublisherUrl: https://gitlab.com/mattbusel
+PublisherSupportUrl: https://gitlab.com/mattbusel/llm-bench/-/issues
 Author: Matt Busel
 PackageName: llm-bench
-PackageUrl: https://github.com/Mattbusel/llm-bench
+PackageUrl: https://gitlab.com/mattbusel/llm-bench
 License: MIT
-LicenseUrl: https://github.com/Mattbusel/llm-bench/blob/main/LICENSE
+LicenseUrl: https://gitlab.com/mattbusel/llm-bench/-/blob/main/LICENSE
 ShortDescription: Compare LLM models on p50/p99 latency, tokens per second and cost in one table.
 Description: Sends the same prompts to OpenAI, Anthropic or any OpenAI-compatible server (Ollama, vLLM, LM Studio) concurrently and prints p50/p99 latency, tokens per second, cost per request and success rate per model.
 Moniker: llm-bench
@@ -19,6 +19,6 @@ Tags:
   - openai
   - anthropic
   - cli
-ReleaseNotesUrl: https://github.com/Mattbusel/llm-bench/releases/tag/v0.2.2
+ReleaseNotesUrl: https://gitlab.com/mattbusel/llm-bench/-/releases
 ManifestType: defaultLocale
 ManifestVersion: 1.6.0

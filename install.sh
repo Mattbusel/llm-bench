@@ -1,6 +1,6 @@
 #!/bin/sh
 # Install llm-bench from the latest GitHub Release (Linux x86_64, macOS arm64/x86_64).
-#   curl -fsSL https://raw.githubusercontent.com/Mattbusel/llm-bench/main/install.sh | sh
+#   curl -fsSL https://gitlab.com/mattbusel/llm-bench/-/raw/main/install.sh | sh
 # Options (environment): LLM_BENCH_VERSION=v0.2.1 to pin, INSTALL_DIR=/somewhere to change ~/.local/bin
 set -eu
 
