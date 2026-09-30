@@ -28,6 +28,8 @@ mkdir -p ~/.local/bin && curl -fsSL https://gitlab.com/mattbusel/llm-bench/-/rel
 
 Needs an OpenAI or Anthropic key, or a local Ollama, to benchmark. Every release, with SHA-256 checksums: [Releases](https://gitlab.com/mattbusel/llm-bench/-/releases).
 
+**In GitLab CI:** benchmark models on every pipeline and fail when p99 latency or the success rate slips with the [`llm-benchmark`](https://gitlab.com/explore/catalog/mattbusel/llm-ci) CI/CD component.
+
 ## Use it in 3 steps
 
 **1. See which models it knows prices for**
