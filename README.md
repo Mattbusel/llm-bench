@@ -10,7 +10,7 @@ Vendor latency numbers rarely match what you see from your own network with your
 
 ### Download (no Rust needed)
 
-Grab the file for your system from the [latest release](https://github.com/Mattbusel/llm-bench/releases/latest):
+Grab the file for your system from the [latest release](https://gitlab.com/mattbusel/llm-bench/-/releases):
 
 | System | File |
 |--------|------|
@@ -32,7 +32,7 @@ cargo install llm-bench
 ### From source
 
 ```bash
-git clone https://github.com/Mattbusel/llm-bench
+git clone https://gitlab.com/mattbusel/llm-bench
 cd llm-bench
 cargo build --release
 ./target/release/llm-bench --help
@@ -198,4 +198,4 @@ src/
 
 ---
 
-Related: [tokio-prompt-orchestrator](https://github.com/Mattbusel/tokio-prompt-orchestrator), a Rust orchestration layer for LLM pipelines, and the [rust-crates](https://github.com/Mattbusel/rust-crates) index.
+Related: [tokio-prompt-orchestrator](https://gitlab.com/mattbusel/tokio-prompt-orchestrator), a Rust orchestration layer for LLM pipelines, and the [rust-crates](https://gitlab.com/mattbusel/rust-crates) index.
