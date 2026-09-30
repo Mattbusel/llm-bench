@@ -1,7 +1,5 @@
 # llm-bench
 
-[![CI](https://github.com/Mattbusel/llm-bench/actions/workflows/ci.yml/badge.svg)](https://github.com/Mattbusel/llm-bench/actions/workflows/ci.yml)
-
 A command-line benchmark for LLM APIs: send the same prompts to OpenAI and Anthropic models concurrently and compare p50/p99 latency, tokens per second, cost per request and success rate in one table or JSON file.
 
 Vendor latency numbers rarely match what you see from your own network with your own prompts. `llm-bench` runs your prompts N times against each model with a bounded number of requests in flight, then aggregates the results per model, so you can pick a model on measured speed and cost instead of a pricing page.
