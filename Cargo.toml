@@ -2,7 +2,7 @@
 
 [package]
 name = "llm-bench"
-version = "0.2.3"
+version = "0.2.4"
 edition = "2021"
 description = "Send the same prompts to OpenAI, Anthropic or any OpenAI-compatible server and compare p50/p99 latency, tokens per second and cost in one table"
 license = "MIT"
@@ -36,7 +36,7 @@ panic = "deny"
 tokio = { version = "1.40", features = ["full"] }
 
 # reqwest: HTTP client for OpenAI and Anthropic API calls
-reqwest = { version = "0.12", features = ["json"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "charset", "http2"] }
 
 # serde / serde_json: serialization for API request/response and JSON output
 serde = { version = "1.0", features = ["derive"] }

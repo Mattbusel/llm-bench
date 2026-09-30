@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.2.4] - 2026-09-30
+
+- HTTPS through rustls instead of the system OpenSSL. The 0.2.3 Linux download needed OpenSSL 1.1, which Ubuntu 22.04 and newer do not ship; this one runs on any glibc 2.31+ distribution.
+
 ## [0.2.3] - 2026-09-30
 
 - Links point at GitLab.
