@@ -15,17 +15,18 @@ It sends the same prompts to several models at once (OpenAI, Anthropic, or any O
 
 ## Install
 
-| Platform | Command |
-|----------|---------|
-| Windows (PowerShell) | `irm https://gitlab.com/mattbusel/llm-bench/-/raw/main/install.ps1 \| iex` |
-| macOS / Linux | `curl -fsSL https://gitlab.com/mattbusel/llm-bench/-/raw/main/install.sh \| sh` |
-| Homebrew | `brew install mattbusel/tap/llm-bench` |
-| Scoop | `scoop bucket add mattbusel https://gitlab.com/mattbusel/scoop-bucket` then `scoop install llm-bench` |
-| Rust, prebuilt | `cargo binstall llm-bench` |
-| Rust, from source | `cargo install llm-bench` |
-| Manual | Download a zip or tarball from [Releases](https://gitlab.com/mattbusel/llm-bench/-/releases) (Windows, macOS Intel and Apple Silicon, Linux x86_64) |
+**Linux** (x86_64, Ubuntu 20.04+ / Debian 11+). One line, no dependencies, installs to `~/.local/bin`:
 
-The scripts verify the download against the release's `SHA256SUMS.txt`. The Windows script installs to `%LOCALAPPDATA%\Programs\llm-bench` and adds it to your user PATH; the shell script installs to `~/.local/bin`. The binaries are not code-signed: Windows SmartScreen may say "unknown publisher" (More info, then Run anyway), and on macOS a manually downloaded file may need `xattr -d com.apple.quarantine llm-bench`.
+```sh
+mkdir -p ~/.local/bin && curl -fsSL https://gitlab.com/mattbusel/llm-bench/-/releases/permalink/latest/downloads/llm-bench-linux-x86_64.tar.gz | tar xz --strip-components=1 -C ~/.local/bin --wildcards '*/llm-bench'
+```
+
+| Other systems | |
+|---|---|
+| **Windows** | [Download llm-bench-windows-x86_64.exe](https://gitlab.com/mattbusel/llm-bench/-/releases/permalink/latest/downloads/llm-bench-windows-x86_64.exe) and run it. (Unsigned, so SmartScreen may ask: *More info*, then *Run anyway*.) |
+| **macOS, or from source** | `cargo install --locked llm-bench` |
+
+Needs an OpenAI or Anthropic key, or a local Ollama, to benchmark. Every release, with SHA-256 checksums: [Releases](https://gitlab.com/mattbusel/llm-bench/-/releases).
 
 ## Use it in 3 steps
 
