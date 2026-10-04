@@ -16,9 +16,13 @@
 //! - API calls (see `providers.rs`)
 //! - CLI argument parsing (see `cli.rs`)
 
+#[cfg(feature = "cli")]
 use colored::Colorize;
+#[cfg(feature = "cli")]
 use tabled::settings::object::Columns;
+#[cfg(feature = "cli")]
 use tabled::settings::{Alignment, Modify, Style};
+#[cfg(feature = "cli")]
 use tabled::{Table, Tabled};
 
 use crate::error::BenchError;
@@ -206,7 +210,7 @@ pub fn verdict_line(summaries: &[BenchSummary]) -> Option<String> {
     let fastest = live.iter().min_by_key(|s| s.p50_latency_ms)?;
     let mut line = format!(
         "{} {} (p50 {} ms)",
-        "Fastest:".green().bold(),
+        "Fastest:",
         fastest.model,
         fastest.p50_latency_ms
     );
@@ -219,7 +223,7 @@ pub fn verdict_line(summaries: &[BenchSummary]) -> Option<String> {
         {
             line.push_str(&format!(
                 "   {} {} (${:.6} per request)",
-                "Cheapest:".green().bold(),
+                "Cheapest:",
                 cheapest.model,
                 cheapest.avg_cost_usd
             ));
@@ -247,6 +251,7 @@ fn percentile_sorted(sorted: &[u64], p: usize) -> u64 {
 //  Table rendering
 
 /// Row type for `tabled` table rendering.
+#[cfg(feature = "cli")]
 #[derive(Tabled)]
 struct SummaryRow {
     #[tabled(rename = "Provider")]
@@ -267,7 +272,8 @@ struct SummaryRow {
     success_rate: String,
 }
 
-/// Print a coloured ASCII summary table to stdout.
+/// Print a coloured ASCII summary table to stdout (feature `cli`).
+#[cfg(feature = "cli")]
 ///
 /// # Panics
 /// This function never panics.
@@ -310,7 +316,7 @@ pub fn print_table(summaries: &[BenchSummary]) {
         .to_string();
     println!("\n{}", table.cyan());
     if let Some(line) = verdict_line(summaries) {
-        println!("{line}");
+        println!("{}", line.green());
     }
     println!();
 }
@@ -327,6 +333,60 @@ pub fn print_table(summaries: &[BenchSummary]) {
 /// This function never panics.
 pub fn print_results_json(results: &[BenchResult]) -> Result<String, BenchError> {
     serde_json::to_string_pretty(results).map_err(BenchError::SerdeJson)
+}
+
+//  CSV output
+
+/// One CSV row per result, with a header, written with the `csv` crate so
+/// prompts and answers containing commas, quotes or newlines stay intact.
+///
+/// Columns: provider, model, run_index, latency_ms, ttft_ms, total_ms,
+/// prompt_tokens, completion_tokens, tokens_per_second, cost_usd, retries,
+/// prompt, response_text. `ttft_ms` is empty for non-streamed requests.
+///
+/// # Errors
+/// Returns `BenchError::Io` if the CSV writer fails.
+pub fn results_csv(results: &[BenchResult]) -> Result<String, BenchError> {
+    let mut w = csv::Writer::from_writer(Vec::new());
+    let io = |e: csv::Error| BenchError::Io(std::io::Error::other(e));
+    w.write_record([
+        "provider",
+        "model",
+        "run_index",
+        "latency_ms",
+        "ttft_ms",
+        "total_ms",
+        "prompt_tokens",
+        "completion_tokens",
+        "tokens_per_second",
+        "cost_usd",
+        "retries",
+        "prompt",
+        "response_text",
+    ])
+    .map_err(io)?;
+    for r in results {
+        w.write_record([
+            r.provider.clone(),
+            r.model.clone(),
+            r.run_index.to_string(),
+            r.latency_ms.to_string(),
+            r.ttft_ms.map(|t| t.to_string()).unwrap_or_default(),
+            r.total_ms.to_string(),
+            r.prompt_tokens.to_string(),
+            r.completion_tokens.to_string(),
+            format!("{:.3}", r.tokens_per_second),
+            format!("{:.8}", r.cost_usd),
+            r.retries.to_string(),
+            r.prompt.clone(),
+            r.response_text.clone(),
+        ])
+        .map_err(io)?;
+    }
+    let bytes = w
+        .into_inner()
+        .map_err(|e| BenchError::Io(std::io::Error::other(e.to_string())))?;
+    Ok(String::from_utf8_lossy(&bytes).into_owned())
 }
 
 //  Tests
@@ -357,6 +417,9 @@ mod tests {
             tokens_per_second: tps,
             response_text: "response".into(),
             run_index: 0,
+            ttft_ms: None,
+            retries: 0,
+            tpot_ms: None,
         }
     }
 
@@ -403,6 +466,21 @@ mod tests {
         assert_eq!(lines.len(), 1);
         assert!(lines[0].starts_with("2x "));
         assert!(lines[0].contains("hint:"));
+    }
+
+    #[test]
+    fn test_results_csv_quotes_commas_and_newlines() {
+        let mut r = make_result("openai", "gpt-4o-mini", 120, 0.0001, 40.0);
+        r.prompt = "Say \"hi\", then stop".into();
+        r.response_text = "line one\nline two".into();
+        r.ttft_ms = Some(35);
+        let csv_text = results_csv(&[r]).unwrap();
+        let mut rd = csv::Reader::from_reader(csv_text.as_bytes());
+        let rows: Vec<csv::StringRecord> = rd.records().map(|x| x.unwrap()).collect();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(&rows[0][4], "35");
+        assert_eq!(&rows[0][11], "Say \"hi\", then stop");
+        assert_eq!(&rows[0][12], "line one\nline two");
     }
 
     #[test]
@@ -654,12 +732,14 @@ mod tests {
 
     //  print_table (smoke tests  -  checks no panic)
 
+    #[cfg(feature = "cli")]
     #[test]
     fn test_print_table_empty_does_not_panic() {
         // Should print "No results to display." without panicking
         print_table(&[]);
     }
 
+    #[cfg(feature = "cli")]
     #[test]
     fn test_print_table_with_data_does_not_panic() {
         let results = vec![make_result("openai", "gpt-4o-mini", 100, 0.001, 40.0)];
@@ -667,6 +747,7 @@ mod tests {
         print_table(&summaries);
     }
 
+    #[cfg(feature = "cli")]
     #[test]
     fn test_print_table_multiple_rows_does_not_panic() {
         let results = vec![

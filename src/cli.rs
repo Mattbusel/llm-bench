@@ -32,8 +32,14 @@ const HELP_EXAMPLES: &str = "Examples:
   llm-bench run --models gpt-4o-mini,claude-haiku-4-5 --prompt-file prompts.txt --runs 5
       Compare two providers on your own prompts.
 
-  llm-bench run --openai-base-url http://localhost:11434 --models openai:llama3.2 --prompts \"Say hi\"
-      Any OpenAI-compatible server (Ollama, vLLM, LM Studio); no key needed.";
+  llm-bench run --models ollama:llama3.2 --prompts \"Say hi\" --stream
+      A local Ollama model, no key needed; --stream adds time to first token.
+
+  llm-bench run --models openrouter:meta-llama/llama-3.3-70b-instruct,gemini:gemini-2.5-flash --prompts \"Say hi\"
+      OpenRouter (OPENROUTER_API_KEY) and Gemini (GEMINI_API_KEY).
+
+  llm-bench run --openai-base-url http://localhost:8000 --models openai:my-model --prompts \"Say hi\"
+      Any OpenAI-compatible server (vLLM, LM Studio, a proxy); no key needed.";
 
 //  Top-level CLI
 
@@ -45,11 +51,12 @@ const HELP_EXAMPLES: &str = "Examples:
 #[command(
     name = "llm-bench",
     version,
-    about = "Benchmark OpenAI and Anthropic models on latency, cost, and throughput",
+    about = "Benchmark LLMs (OpenAI, Anthropic, Ollama, OpenRouter, Gemini, any OpenAI-compatible server) on latency, cost and throughput",
     long_about = None,
     after_help = HELP_EXAMPLES
 )]
 pub struct Cli {
+    /// The sub-command to run.
     #[command(subcommand)]
     pub command: Command,
 }
@@ -91,10 +98,24 @@ pub struct RunArgs {
     #[arg(long, env = "ANTHROPIC_BASE_URL")]
     pub anthropic_base_url: Option<String>,
 
+    /// OpenRouter API key, for `openrouter:` models.
+    #[arg(long, env = "OPENROUTER_API_KEY", hide_env_values = true)]
+    pub openrouter_key: Option<String>,
+
+    /// Google Gemini API key, for `gemini:` models.
+    #[arg(long, env = "GEMINI_API_KEY", hide_env_values = true)]
+    pub gemini_key: Option<String>,
+
+    /// Ollama server for `ollama:` models (default http://localhost:11434).
+    /// `OLLAMA_HOST` is read too, with or without `http://`.
+    #[arg(long, env = "OLLAMA_HOST")]
+    pub ollama_url: Option<String>,
+
     /// Comma-separated list of model identifiers to benchmark.
     ///
-    /// Prefix with provider: `openai:gpt-4o-mini` or `anthropic:claude-haiku-4-5`.
-    /// Bare names (no prefix) are matched against known models automatically.
+    /// Prefix with the provider: `openai:`, `anthropic:`, `ollama:`,
+    /// `openrouter:` or `gemini:`. Bare `gpt-*`, `o1*`, `o3*`, `o4*`,
+    /// `claude-*` and `gemini-*` names are matched automatically.
     #[arg(
         long,
         value_delimiter = ',',
@@ -129,6 +150,26 @@ pub struct RunArgs {
     /// Maximum completion tokens per request.
     #[arg(long, default_value_t = 512)]
     pub max_tokens: u32,
+
+    /// Stream responses to measure time to first token. Latency columns
+    /// then show time to first token instead of time to the full answer.
+    #[arg(long)]
+    pub stream: bool,
+
+    /// Retry a request this many times on HTTP 429, 5xx, timeouts and
+    /// connection errors (backoff with jitter; Retry-After is honoured).
+    #[arg(long, default_value_t = 0)]
+    pub retries: u32,
+
+    /// Send this many requests to each model first and discard them (cold
+    /// starts, local models loading into memory).
+    #[arg(long, default_value_t = 0)]
+    pub warmup: u32,
+
+    /// Write per-model statistics (mean, stddev, p50/p90/p95/p99 of latency,
+    /// TTFT, total time and time per output token) to this JSON file.
+    #[arg(long)]
+    pub summary_file: Option<PathBuf>,
 }
 
 /// Output format selector.
@@ -138,6 +179,8 @@ pub enum OutputFormat {
     Table,
     /// JSON array of all BenchResult records.
     Json,
+    /// CSV, one row per successful request.
+    Csv,
 }
 
 //  Config builder
@@ -186,20 +229,24 @@ pub fn build_config(args: &RunArgs) -> Result<BenchConfig, BenchError> {
 
         let (provider_name, model) = resolve_model(model_str)?;
 
+        let key = |k: &Option<String>| k.as_deref().unwrap_or("").trim().to_owned();
         let (api_key, base_url, env_var) = match provider_name {
             "openai" => (
-                args.openai_key.as_deref().unwrap_or("").trim().to_owned(),
+                key(&args.openai_key),
                 normalize_base_url(args.openai_base_url.as_deref()),
                 "OPENAI_API_KEY",
             ),
             "anthropic" => (
-                args.anthropic_key
-                    .as_deref()
-                    .unwrap_or("")
-                    .trim()
-                    .to_owned(),
+                key(&args.anthropic_key),
                 normalize_base_url(args.anthropic_base_url.as_deref()),
                 "ANTHROPIC_API_KEY",
+            ),
+            "openrouter" => (key(&args.openrouter_key), String::new(), "OPENROUTER_API_KEY"),
+            "gemini" => (key(&args.gemini_key), String::new(), "GEMINI_API_KEY"),
+            "ollama" => (
+                String::new(),
+                normalize_ollama_url(args.ollama_url.as_deref()),
+                "",
             ),
             other => {
                 return Err(BenchError::InvalidConfig {
@@ -208,9 +255,9 @@ pub fn build_config(args: &RunArgs) -> Result<BenchConfig, BenchError> {
             }
         };
 
-        // Official endpoints need a key; a custom base URL (local server,
-        // proxy) may not.
-        if api_key.is_empty() && base_url.is_empty() {
+        // Hosted endpoints need a key; a custom base URL (local server,
+        // proxy) and Ollama may not.
+        if api_key.is_empty() && base_url.is_empty() && provider_name != "ollama" {
             return Err(BenchError::InvalidConfig {
                 reason: format!(
                     "no API key for {provider_name} (needed for model '{model}').\n  \
@@ -240,6 +287,9 @@ pub fn build_config(args: &RunArgs) -> Result<BenchConfig, BenchError> {
         runs_per_prompt: args.runs,
         concurrency: args.concurrency,
         providers,
+        stream: args.stream,
+        retries: args.retries,
+        warmup: args.warmup,
     })
 }
 
@@ -257,6 +307,26 @@ fn normalize_base_url(raw: Option<&str>) -> String {
     s.trim_end_matches('/').to_owned()
 }
 
+/// Ollama's address from `--ollama-url` / `OLLAMA_HOST`. `OLLAMA_HOST` is
+/// often a bind address such as `0.0.0.0:11434` without a scheme; that is
+/// turned into `http://localhost:11434`. Empty means the default.
+fn normalize_ollama_url(raw: Option<&str>) -> String {
+    let raw = raw.unwrap_or("").trim();
+    if raw.is_empty() {
+        return String::new();
+    }
+    let with_scheme = if raw.contains("://") {
+        raw.to_owned()
+    } else {
+        format!("http://{raw}")
+    };
+    let fixed = with_scheme.replace("://0.0.0.0", "://localhost");
+    normalize_base_url(Some(&fixed))
+}
+
+/// Provider prefixes accepted in `--models`.
+const PREFIXES: [&str; 5] = ["openai", "anthropic", "ollama", "openrouter", "gemini"];
+
 /// Resolve a model string to `(provider_name, model_id)`.
 ///
 /// Accepts:
@@ -267,25 +337,34 @@ fn normalize_base_url(raw: Option<&str>) -> String {
 /// # Panics
 /// This function never panics.
 fn resolve_model(s: &str) -> Result<(&'static str, &str), BenchError> {
-    if let Some(rest) = s.strip_prefix("openai:") {
-        return Ok(("openai", rest));
-    }
-    if let Some(rest) = s.strip_prefix("anthropic:") {
-        return Ok(("anthropic", rest));
+    for p in PREFIXES {
+        if let Some(rest) = s.strip_prefix(p).and_then(|r| r.strip_prefix(':')) {
+            if !rest.is_empty() {
+                return Ok((p, rest));
+            }
+        }
     }
 
     // Auto-detect from known model name prefixes
-    if s.starts_with("gpt-") || s.starts_with("o1") || s.starts_with("o3") {
+    if s.starts_with("gpt-")
+        || s.starts_with("chatgpt-")
+        || s.starts_with("o1")
+        || s.starts_with("o3")
+        || s.starts_with("o4")
+    {
         return Ok(("openai", s));
     }
     if s.starts_with("claude-") {
         return Ok(("anthropic", s));
     }
+    if s.starts_with("gemini-") {
+        return Ok(("gemini", s));
+    }
 
     Err(BenchError::InvalidConfig {
         reason: format!(
             "Cannot determine provider for model '{s}'. \
-             Prefix with 'openai:' or 'anthropic:', e.g. openai:{s}"
+             Prefix it with openai:, anthropic:, ollama:, openrouter: or gemini:, e.g. ollama:{s}"
         ),
     })
 }
@@ -405,6 +484,13 @@ mod tests {
             output: OutputFormat::Table,
             output_file: None,
             max_tokens: 128,
+            openrouter_key: None,
+            gemini_key: None,
+            ollama_url: None,
+            stream: false,
+            retries: 0,
+            warmup: 0,
+            summary_file: None,
         }
     }
 
@@ -457,6 +543,13 @@ mod tests {
             output: OutputFormat::Table,
             output_file: None,
             max_tokens: 128,
+            openrouter_key: None,
+            gemini_key: None,
+            ollama_url: None,
+            stream: false,
+            retries: 0,
+            warmup: 0,
+            summary_file: None,
         };
         let result = build_config(&args);
         assert!(result.is_err());
@@ -481,6 +574,13 @@ mod tests {
             output: OutputFormat::Table,
             output_file: None,
             max_tokens: 128,
+            openrouter_key: None,
+            gemini_key: None,
+            ollama_url: None,
+            stream: false,
+            retries: 0,
+            warmup: 0,
+            summary_file: None,
         };
         let result = build_config(&args);
         assert!(result.is_err());
@@ -505,6 +605,13 @@ mod tests {
             output: OutputFormat::Table,
             output_file: None,
             max_tokens: 128,
+            openrouter_key: None,
+            gemini_key: None,
+            ollama_url: None,
+            stream: false,
+            retries: 0,
+            warmup: 0,
+            summary_file: None,
         };
         let result = build_config(&args);
         assert!(result.is_err());
@@ -525,6 +632,13 @@ mod tests {
             output: OutputFormat::Table,
             output_file: None,
             max_tokens: 256,
+            openrouter_key: None,
+            gemini_key: None,
+            ollama_url: None,
+            stream: false,
+            retries: 0,
+            warmup: 0,
+            summary_file: None,
         };
         let config = build_config(&args).unwrap_or_else(|_| unreachable!());
         assert_eq!(config.providers[0].model, "gpt-4o");
@@ -545,6 +659,13 @@ mod tests {
             output: OutputFormat::Table,
             output_file: None,
             max_tokens: 128,
+            openrouter_key: None,
+            gemini_key: None,
+            ollama_url: None,
+            stream: false,
+            retries: 0,
+            warmup: 0,
+            summary_file: None,
         };
         let config = build_config(&args).unwrap_or_else(|_| unreachable!());
         assert_eq!(config.providers.len(), 2);
@@ -572,6 +693,13 @@ mod tests {
             output: OutputFormat::Table,
             output_file: None,
             max_tokens: 128,
+            openrouter_key: None,
+            gemini_key: None,
+            ollama_url: None,
+            stream: false,
+            retries: 0,
+            warmup: 0,
+            summary_file: None,
         };
         let result = build_config(&args);
         assert!(result.is_err());
@@ -611,6 +739,13 @@ mod tests {
             output: OutputFormat::Table,
             output_file: None,
             max_tokens: 128,
+            openrouter_key: None,
+            gemini_key: None,
+            ollama_url: None,
+            stream: false,
+            retries: 0,
+            warmup: 0,
+            summary_file: None,
         };
         let config = build_config(&args).unwrap_or_else(|_| unreachable!());
         assert_eq!(config.prompts.len(), 2);
@@ -618,6 +753,57 @@ mod tests {
 
         // Cleanup
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_resolve_model_new_prefixes() {
+        assert_eq!(resolve_model("ollama:qwen2.5:0.5b").ok(), Some(("ollama", "qwen2.5:0.5b")));
+        assert_eq!(
+            resolve_model("openrouter:meta-llama/llama-3.3-70b-instruct").ok(),
+            Some(("openrouter", "meta-llama/llama-3.3-70b-instruct"))
+        );
+        assert_eq!(resolve_model("gemini-2.5-flash").ok(), Some(("gemini", "gemini-2.5-flash")));
+        assert_eq!(resolve_model("o4-mini").ok(), Some(("openai", "o4-mini")));
+        // A colon inside a bare model id is not a provider prefix.
+        assert!(resolve_model("qwen2.5:0.5b").is_err());
+        assert!(resolve_model("ollama:").is_err());
+    }
+
+    #[test]
+    fn test_build_config_ollama_needs_no_key_and_reads_ollama_host() {
+        let mut args = minimal_run_args("ollama:llama3.2", "openai", "");
+        args.openai_key = None;
+        let c = build_config(&args).unwrap();
+        assert_eq!(c.providers[0].name, "ollama");
+        assert_eq!(c.providers[0].base_url, "");
+        args.ollama_url = Some("0.0.0.0:11434".into());
+        let c = build_config(&args).unwrap();
+        assert_eq!(c.providers[0].base_url, "http://localhost:11434");
+    }
+
+    #[test]
+    fn test_build_config_hosted_providers_need_their_keys() {
+        let mut args = minimal_run_args("openrouter:openai/gpt-4o-mini", "openai", "sk");
+        let err = build_config(&args).err().map(|e| e.to_string()).unwrap_or_default();
+        assert!(err.contains("OPENROUTER_API_KEY"), "{err}");
+        args.openrouter_key = Some("or-key".into());
+        let c = build_config(&args).unwrap();
+        assert_eq!(c.providers[0].api_key, "or-key");
+
+        let mut args = minimal_run_args("gemini:gemini-2.5-flash", "openai", "sk");
+        assert!(build_config(&args).is_err());
+        args.gemini_key = Some("g".into());
+        assert!(build_config(&args).is_ok());
+    }
+
+    #[test]
+    fn test_stream_and_retries_propagate() {
+        let mut args = minimal_run_args("gpt-4o-mini", "openai", "sk-test");
+        args.stream = true;
+        args.retries = 3;
+        let c = build_config(&args).unwrap();
+        assert!(c.stream);
+        assert_eq!(c.retries, 3);
     }
 
     //  OutputFormat

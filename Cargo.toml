@@ -2,73 +2,85 @@
 
 [package]
 name = "llm-bench"
-version = "0.2.4"
+version = "0.3.0"
 edition = "2021"
-description = "Send the same prompts to OpenAI, Anthropic or any OpenAI-compatible server and compare p50/p99 latency, tokens per second and cost in one table"
+description = "Send the same prompts to OpenAI, Anthropic, Ollama, OpenRouter, Gemini or any OpenAI-compatible server and compare time to first token, latency percentiles, tokens per second and cost; CLI and library"
+rust-version = "1.87"
 license = "MIT"
 repository = "https://gitlab.com/mattbusel/llm-bench"
 homepage = "https://gitlab.com/mattbusel/llm-bench"
 readme = "README.md"
-documentation = "https://gitlab.com/mattbusel/llm-bench#readme"
-exclude = ["assets/", "packaging/", "scripts/", ".github/", "install.sh", "install.ps1"]
+documentation = "https://docs.rs/llm-bench"
+include = ["src/**/*", "tests/**/*", "examples/**/*", "scripts/mock_server.py", "README.md", "CHANGELOG.md", "LICENSE", "Cargo.toml", "Cargo.lock"]
 keywords = ["llm", "benchmark", "latency", "openai", "anthropic"]
 categories = ["command-line-utilities", "development-tools"]
 
-[package.metadata.binstall]
-pkg-url = "{ repo }/releases/download/v{ version }/{ name }-v{ version }-{ target }{ archive-suffix }"
-bin-dir = "{ name }-v{ version }-{ target }/{ bin }{ binary-ext }"
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+# cargo binstall: prebuilt binaries from GitLab releases (Linux x86_64 and
+# Windows x86_64); other targets build from source.
+[package.metadata.binstall.overrides.x86_64-unknown-linux-gnu]
+pkg-url = "{ repo }/-/releases/v{ version }/downloads/llm-bench-linux-x86_64.tar.gz"
+bin-dir = "llm-bench-v{ version }-x86_64-unknown-linux-gnu/{ bin }{ binary-ext }"
 pkg-fmt = "tgz"
 
 [package.metadata.binstall.overrides.x86_64-pc-windows-msvc]
-pkg-fmt = "zip"
+pkg-url = "{ repo }/-/releases/v{ version }/downloads/llm-bench-windows-x86_64.exe"
+pkg-fmt = "bin"
 
 [[bin]]
 name = "llm-bench"
 path = "src/main.rs"
+required-features = ["cli"]
+
+[[example]]
+name = "local_server"
+
+[[example]]
+name = "latency_gate"
+
+[[example]]
+name = "compare_providers"
 
 [lints.clippy]
 unwrap_used = "deny"
 expect_used = "deny"
 panic = "deny"
 
+[features]
+default = ["cli"]
+# The llm-bench binary: argument parsing, progress bar, coloured table, logging.
+cli = ["dep:clap", "dep:indicatif", "dep:tabled", "dep:colored", "dep:tracing-subscriber", "tokio/rt-multi-thread", "tokio/signal", "tokio/macros"]
+
 [dependencies]
-# tokio: async runtime  -  core dependency for concurrent benchmark runs
-tokio = { version = "1.40", features = ["full"] }
-
-# reqwest: HTTP client for OpenAI and Anthropic API calls
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "charset", "http2"] }
-
-# serde / serde_json: serialization for API request/response and JSON output
+tokio = { version = "1.40", features = ["rt", "sync", "time"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "charset", "http2", "stream"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-
-# thiserror: zero-cost typed error derive  -  replaces manual Display impls
 thiserror = "1.0"
-
-# clap: command-line argument parsing with derive macro
-clap = { version = "4.5", features = ["derive", "env"] }
-
-# indicatif: progress bars during benchmark runs
-indicatif = "0.17"
-
-# tabled: formatted ASCII tables for benchmark output
-tabled = "0.15"
-
-# colored: terminal color support for output
-colored = "2.1"
-
-# tracing / tracing-subscriber: structured logging
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-
-# futures: async combinators for concurrent provider execution
 futures = "0.3"
+# Server-sent events parser for --stream.
+eventsource-stream = "0.2"
+# Retries with exponential backoff and jitter (--retries).
+backon = { version = "1.5", default-features = false, features = ["std", "tokio-sleep"] }
+# The HTTP-date form of Retry-After.
+httpdate = "1"
+# --output csv
+csv = "1"
 
-# tokio-stream: stream utilities for streaming API responses
-tokio-stream = "0.1"
+# cli
+clap = { version = "4.5", features = ["derive", "env"], optional = true }
+indicatif = { version = "0.17", optional = true }
+tabled = { version = "0.15", optional = true }
+colored = { version = "2.1", optional = true }
+tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
 
 [dev-dependencies]
-# wiremock: HTTP mock server for provider API testing
+# HTTP mock server for provider tests.
 wiremock = "0.6"
-
-# tokio test macro already provided by tokio/full
+# Property tests for the statistics.
+proptest = "1"
+tokio = { version = "1.40", features = ["rt-multi-thread", "macros", "net", "io-util", "time"] }

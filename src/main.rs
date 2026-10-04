@@ -1,10 +1,8 @@
 //! # llm-bench
 //!
-//! Universal LLM provider benchmark CLI.
-//!
-//! Compares OpenAI and Anthropic models on latency (p50/p99), cost per
-//! request, and token throughput.  Runs prompts concurrently against all
-//! configured models and renders results as a coloured ASCII table or JSON.
+//! Benchmark LLM providers from the command line: p50/p99 latency (or time
+//! to first token with `--stream`), tokens per second, cost and success
+//! rate, as a table, JSON or CSV.
 //!
 //! ## Entry points
 //! - `llm-bench run`      -  execute a benchmark
@@ -23,15 +21,9 @@ use colored::Colorize;
 use indicatif::{ProgressBar, ProgressStyle};
 use tracing::info;
 
-mod cli;
-mod error;
-mod providers;
-mod report;
-mod runner;
-mod types;
-
-use cli::{Cli, Command, OutputFormat};
-use error::BenchError;
+use llm_bench::cli::{self, Cli, Command, OutputFormat};
+use llm_bench::error::BenchError;
+use llm_bench::{providers, report, runner};
 
 #[tokio::main]
 async fn main() {
@@ -76,14 +68,24 @@ async fn run_benchmark(args: cli::RunArgs) -> Result<(), BenchError> {
     let total_tasks =
         config.providers.len() * config.prompts.len() * config.runs_per_prompt as usize;
 
-    println!(
+    // With --output json or csv, stdout carries only the data, so status
+    // lines go to stderr (before 0.3.0 they were mixed into the JSON).
+    let status_line = |line: String| {
+        if matches!(args.output, OutputFormat::Table) {
+            println!("{line}");
+        } else {
+            eprintln!("{line}");
+        }
+    };
+
+    status_line(format!(
         "{} Benchmarking {} model(s) × {} prompt(s) × {} run(s) = {} total requests",
         "→".cyan().bold(),
         config.providers.len(),
         config.prompts.len(),
         config.runs_per_prompt,
         total_tasks
-    );
+    ));
 
     //  Progress bar
     let pb = ProgressBar::new(total_tasks as u64);
@@ -129,7 +131,7 @@ async fn run_benchmark(args: cli::RunArgs) -> Result<(), BenchError> {
     let failed = failures.len();
     let rate = (success * 100).checked_div(success + failed).unwrap_or(0);
     let status = format!("{success} succeeded, {failed} failed ({rate}% success rate)");
-    println!(
+    status_line(format!(
         "
 {} {}",
         "Results:".bold(),
@@ -138,7 +140,7 @@ async fn run_benchmark(args: cli::RunArgs) -> Result<(), BenchError> {
         } else {
             status.yellow()
         }
-    );
+    ));
 
     //  Output
     match args.output {
@@ -150,6 +152,15 @@ async fn run_benchmark(args: cli::RunArgs) -> Result<(), BenchError> {
             let json = report::print_results_json(&results)?;
             println!("{json}");
         }
+        OutputFormat::Csv => {
+            print!("{}", report::results_csv(&results)?);
+        }
+    }
+    if args.stream && matches!(args.output, OutputFormat::Table) {
+        println!(
+            "{}",
+            "Latency columns are time to first token (--stream).".dimmed()
+        );
     }
 
     let lines = report::failure_lines(&failures);
@@ -165,7 +176,14 @@ async fn run_benchmark(args: cli::RunArgs) -> Result<(), BenchError> {
     if let Some(ref path) = args.output_file {
         let json = report::print_results_json(&results)?;
         std::fs::write(path, &json).map_err(BenchError::Io)?;
-        println!("{} Results saved to {}", "→".cyan(), path.display());
+        status_line(format!("{} Results saved to {}", "→".cyan(), path.display()));
+    }
+
+    if let Some(ref path) = args.summary_file {
+        let reports = llm_bench::stats::model_reports(&results, &failures);
+        let json = serde_json::to_string_pretty(&reports).map_err(BenchError::SerdeJson)?;
+        std::fs::write(path, json).map_err(BenchError::Io)?;
+        status_line(format!("{} Summary saved to {}", "→".cyan(), path.display()));
     }
 
     if success == 0 && failed > 0 {
@@ -189,7 +207,7 @@ fn print_models_table() {
     println!("{}", header.bold());
     println!("{}", "─".repeat(header.chars().count()).dimmed());
 
-    for m in providers::supported_models() {
+    for m in providers::supported_models().iter() {
         println!(
             "{:<11} {:<18} {:>11} {:>15}",
             m.provider,
@@ -199,7 +217,7 @@ fn print_models_table() {
         );
     }
     println!(
-        "\nCost is estimated from each response's token counts and these prices.\n{} llm-bench run --models gpt-4o-mini,claude-haiku-4-5 --prompts \"Say hi\"\n",
+        "\nCost is each response's token counts times these prices (OpenRouter's own reported cost is used when present).\nOther models show n/a for cost.\n{} llm-bench run --models gpt-4o-mini,claude-haiku-4-5 --prompts \"Say hi\"\n",
         "Next:".cyan().bold()
     );
 }

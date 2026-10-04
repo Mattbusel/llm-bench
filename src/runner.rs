@@ -1,22 +1,20 @@
 //! # Module: Runner
 //!
-//! ## Responsibility
-//! Orchestrate concurrent benchmark execution across all configured
-//! provider+model pairs and prompts.  Applies a semaphore-based concurrency
-//! cap and collects all results (including errors converted to metadata).
+//! Run every (provider, prompt, run) combination concurrently, bounded by a
+//! semaphore, and collect the results and the failures. Failed requests can
+//! be retried with backoff (`--retries`), using the `backon` crate.
 //!
 //! ## Guarantees
 //! - Concurrent calls are bounded by `BenchConfig::concurrency`.
-//! - Every task failure is captured as `Err(BenchError)`, never silently dropped.
+//! - Every task failure is captured as a [`BenchFailure`], never silently dropped.
 //! - Progress callbacks are invoked once per completed task.
 //! - This module never panics.
-//!
-//! ## NOT Responsible For
-//! - Provider-specific HTTP logic (see `providers.rs`)
-//! - Output formatting (see `report.rs`)
 
+use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 
+use backon::{ExponentialBuilder, Retryable};
 use futures::future::join_all;
 use reqwest::Client;
 use tokio::sync::Semaphore;
@@ -30,6 +28,16 @@ use crate::types::{BenchConfig, BenchFailure, BenchResult, ProviderConfig};
 pub const DEFAULT_OPENAI_BASE_URL: &str = "https://api.openai.com";
 /// Official Anthropic API base URL.
 pub const DEFAULT_ANTHROPIC_BASE_URL: &str = "https://api.anthropic.com";
+/// Local Ollama server.
+pub const DEFAULT_OLLAMA_BASE_URL: &str = "http://localhost:11434";
+/// OpenRouter's OpenAI-compatible API.
+pub const DEFAULT_OPENROUTER_BASE_URL: &str = "https://openrouter.ai/api/v1";
+/// Google Gemini's OpenAI-compatible API.
+pub const DEFAULT_GEMINI_BASE_URL: &str =
+    "https://generativelanguage.googleapis.com/v1beta/openai";
+
+/// Longest wait honoured from a `Retry-After` header.
+const MAX_RETRY_AFTER: Duration = Duration::from_secs(60);
 
 //  Runner
 
@@ -39,13 +47,13 @@ pub struct BenchRunner {
 }
 
 impl BenchRunner {
-    /// Construct a runner with a shared HTTP client.
+    /// Construct a runner with a shared HTTP client (120 s timeout per request).
     ///
     /// # Panics
     /// This function never panics.
     pub fn new() -> Result<Self, BenchError> {
         let client = Client::builder()
-            .timeout(std::time::Duration::from_secs(120))
+            .timeout(Duration::from_secs(120))
             .build()
             .map_err(BenchError::Http)?;
         Ok(Self { client })
@@ -69,10 +77,9 @@ impl BenchRunner {
     where
         F: Fn(usize, usize) + Send + Sync + 'static,
     {
-        let semaphore = Arc::new(Semaphore::new(config.concurrency));
+        let semaphore = Arc::new(Semaphore::new(config.concurrency.max(1)));
         let on_progress = Arc::new(on_progress);
 
-        // Build the full task list: (provider, prompt, run_index)
         let mut tasks = Vec::new();
         for provider in &config.providers {
             for prompt in &config.prompts {
@@ -82,11 +89,20 @@ impl BenchRunner {
             }
         }
 
+        // Warm-up requests: sent one at a time per model, results discarded.
+        for provider in &config.providers {
+            for _ in 0..config.warmup {
+                let prompt = config.prompts.first().map(String::as_str).unwrap_or("");
+                let r = dispatch_call(&self.client, provider, prompt, 0, config.stream).await;
+                debug!(model = %provider.model, ok = r.is_ok(), "warm-up request");
+            }
+        }
+
         let total = tasks.len();
         debug!(total_tasks = total, "starting benchmark run");
 
-        let completed = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        let client = self.client.clone();
+        let completed = Arc::new(AtomicUsize::new(0));
+        let (stream, retries) = (config.stream, config.retries);
 
         let futures: Vec<_> = tasks
             .into_iter()
@@ -94,17 +110,18 @@ impl BenchRunner {
                 let sem = Arc::clone(&semaphore);
                 let cb = Arc::clone(&on_progress);
                 let done = Arc::clone(&completed);
-                let client = client.clone();
+                let client = self.client.clone();
 
                 tokio::spawn(async move {
-                    // Acquire semaphore slot  -  limits concurrency
                     let _permit = sem.acquire().await.map_err(|e| BenchError::Concurrency {
                         reason: e.to_string(),
                     })?;
 
-                    let result = dispatch_call(&client, &provider, &prompt, run_idx).await;
+                    let result =
+                        call_with_retries(&client, &provider, &prompt, run_idx, stream, retries)
+                            .await;
 
-                    let n = done.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                    let n = done.fetch_add(1, Ordering::Relaxed) + 1;
                     cb(n, total);
 
                     Ok::<_, BenchError>(result.map_err(|e| BenchFailure {
@@ -124,13 +141,10 @@ impl BenchRunner {
             match jr {
                 Ok(Ok(Ok(r))) => results.push(r),
                 Ok(Ok(Err(f))) => {
-                    // Keep provider errors for the report; don't abort the run
                     debug!(error = %f.error, "benchmark task returned error");
                     failures.push(f);
                 }
-                Ok(Err(e)) => {
-                    return Err(e);
-                }
+                Ok(Err(e)) => return Err(e),
                 Err(e) => {
                     return Err(BenchError::Concurrency {
                         reason: format!("task panicked or was cancelled: {e}"),
@@ -143,32 +157,98 @@ impl BenchRunner {
     }
 }
 
-/// Dispatch to the correct provider function based on `provider.name`.
+/// Whether a failed request is worth retrying: rate limits, timeouts,
+/// server errors and connection failures. Bad keys, unknown models and
+/// malformed responses are not.
+pub fn is_retryable(e: &BenchError) -> bool {
+    match e {
+        BenchError::RateLimited { .. } => true,
+        BenchError::ApiError { status, .. } => {
+            matches!(status, 408 | 409 | 500 | 502 | 503 | 504 | 529)
+        }
+        BenchError::Http(e) => e.is_timeout() || e.is_connect(),
+        _ => false,
+    }
+}
+
+/// One request with up to `retries` retries (exponential backoff with
+/// jitter, starting at 500 ms; a `Retry-After` on a 429 sets the wait, up
+/// to 60 s). Latency is that of the attempt that succeeded.
+async fn call_with_retries(
+    client: &Client,
+    provider: &ProviderConfig,
+    prompt: &str,
+    run_idx: u32,
+    stream: bool,
+    retries: u32,
+) -> Result<BenchResult, BenchError> {
+    let attempts = AtomicU32::new(0);
+    let backoff = ExponentialBuilder::default()
+        .with_min_delay(Duration::from_millis(500))
+        .with_max_delay(Duration::from_secs(30))
+        .with_max_times(retries as usize)
+        .with_jitter();
+    let mut result = (|| {
+        attempts.fetch_add(1, Ordering::Relaxed);
+        dispatch_call(client, provider, prompt, run_idx, stream)
+    })
+    .retry(backoff)
+    .when(is_retryable)
+    .adjust(|e: &BenchError, dur| match (dur, e) {
+        (None, _) => None,
+        (
+            Some(_),
+            BenchError::RateLimited {
+                retry_after_secs: Some(s),
+                ..
+            },
+        ) => Some(Duration::from_secs(*s).min(MAX_RETRY_AFTER)),
+        (d, _) => d,
+    })
+    .await;
+    if let Ok(r) = result.as_mut() {
+        r.retries = attempts.load(Ordering::Relaxed).saturating_sub(1);
+    }
+    result
+}
+
+/// The base URL a provider uses when none was configured.
+pub fn default_base_url(provider: &str) -> Option<&'static str> {
+    Some(match provider {
+        "openai" => DEFAULT_OPENAI_BASE_URL,
+        "anthropic" => DEFAULT_ANTHROPIC_BASE_URL,
+        "ollama" => DEFAULT_OLLAMA_BASE_URL,
+        "openrouter" => DEFAULT_OPENROUTER_BASE_URL,
+        "gemini" => DEFAULT_GEMINI_BASE_URL,
+        _ => return None,
+    })
+}
+
+/// Send one request to the right API for `provider.name`.
 async fn dispatch_call(
     client: &Client,
     provider: &ProviderConfig,
     prompt: &str,
     run_idx: u32,
+    stream: bool,
 ) -> Result<BenchResult, BenchError> {
-    let base = |default: &'static str| -> String {
-        if provider.base_url.is_empty() {
-            default.to_owned()
-        } else {
-            provider.base_url.clone()
-        }
+    let Some(default) = default_base_url(&provider.name) else {
+        return Err(BenchError::InvalidConfig {
+            reason: format!(
+                "unknown provider '{}'; supported: openai, anthropic, ollama, openrouter, gemini",
+                provider.name
+            ),
+        });
     };
-    match provider.name.as_str() {
-        "openai" => {
-            let url = base(DEFAULT_OPENAI_BASE_URL);
-            run_openai(client, provider, &url, prompt, run_idx).await
-        }
-        "anthropic" => {
-            let url = base(DEFAULT_ANTHROPIC_BASE_URL);
-            run_anthropic(client, provider, &url, prompt, run_idx).await
-        }
-        other => Err(BenchError::InvalidConfig {
-            reason: format!("unknown provider '{other}'; supported: openai, anthropic"),
-        }),
+    let url = if provider.base_url.is_empty() {
+        default.to_owned()
+    } else {
+        provider.base_url.clone()
+    };
+    if provider.name == "anthropic" {
+        run_anthropic(client, provider, &url, prompt, run_idx, stream).await
+    } else {
+        run_openai(client, provider, &url, prompt, run_idx, stream).await
     }
 }
 
@@ -216,7 +296,7 @@ mod tests {
             base_url: String::new(),
             max_tokens: 32,
         };
-        let result = dispatch_call(&client, &provider, "hello", 0).await;
+        let result = dispatch_call(&client, &provider, "hello", 0, false).await;
         assert!(result.is_err());
         assert!(
             matches!(result.unwrap_err(), BenchError::InvalidConfig { .. }),
@@ -250,6 +330,9 @@ mod tests {
             runs_per_prompt: 2,
             concurrency: 4,
             providers: vec![], // no providers → no tasks
+            stream: false,
+            retries: 0,
+            warmup: 0,
         };
         let results = runner
             .run_detailed(&config, |_, _| {})
@@ -267,6 +350,9 @@ mod tests {
             runs_per_prompt: 2,
             concurrency: 4,
             providers: vec![openai_provider("")],
+            stream: false,
+            retries: 0,
+            warmup: 0,
         };
         let results = runner
             .run_detailed(&config, |_, _| {})
@@ -345,6 +431,9 @@ mod tests {
                     max_tokens: 128,
                 },
             ],
+            stream: false,
+            retries: 0,
+            warmup: 0,
         };
         assert_eq!(config.providers.len(), 2);
     }
@@ -371,7 +460,7 @@ mod tests {
             max_tokens: 16,
         };
         // Direct call to run_openai with mock base URL
-        let result = run_openai(&client, &provider, &server.uri(), "hi", 0).await;
+        let result = run_openai(&client, &provider, &server.uri(), "hi", 0, false).await;
         assert!(result.is_ok());
     }
 
@@ -396,7 +485,7 @@ mod tests {
             base_url: String::new(),
             max_tokens: 16,
         };
-        let result = run_anthropic(&client, &provider, &server.uri(), "hi", 0).await;
+        let result = run_anthropic(&client, &provider, &server.uri(), "hi", 0, false).await;
         assert!(result.is_ok());
     }
 
@@ -431,6 +520,9 @@ mod tests {
             runs_per_prompt: 2,
             concurrency: 2,
             providers: vec![good, bad],
+            stream: false,
+            retries: 0,
+            warmup: 0,
         };
         let runner = BenchRunner::new().unwrap_or_else(|_| unreachable!());
         let (results, failures) = runner
@@ -451,5 +543,146 @@ mod tests {
             counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         }
         assert_eq!(counter.load(std::sync::atomic::Ordering::Relaxed), 10);
+    }
+
+    //  Retries
+
+    fn local_openai(server: &MockServer) -> ProviderConfig {
+        ProviderConfig {
+            name: "openai".into(),
+            model: "local".into(),
+            api_key: String::new(),
+            base_url: server.uri(),
+            max_tokens: 8,
+        }
+    }
+
+    fn ok_body() -> ResponseTemplate {
+        ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "choices": [{"message": {"role": "assistant", "content": "ok"}}],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 1}
+        }))
+    }
+
+    fn one_request(provider: ProviderConfig, retries: u32) -> BenchConfig {
+        BenchConfig {
+            prompts: vec!["hi".into()],
+            runs_per_prompt: 1,
+            concurrency: 1,
+            providers: vec![provider],
+            stream: false,
+            retries,
+            warmup: 0,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_rate_limit_is_retried_after_retry_after() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/chat/completions"))
+            .respond_with(ResponseTemplate::new(429).insert_header("retry-after", "1"))
+            .up_to_n_times(1)
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/v1/chat/completions"))
+            .respond_with(ok_body())
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let start = std::time::Instant::now();
+        let (results, failures) = BenchRunner::new()
+            .unwrap()
+            .run_detailed(&one_request(local_openai(&server), 2), |_, _| {})
+            .await
+            .unwrap();
+        assert_eq!((results.len(), failures.len()), (1, 0));
+        assert_eq!(results[0].retries, 1);
+        assert!(start.elapsed() >= Duration::from_millis(950), "{:?}", start.elapsed());
+    }
+
+    #[tokio::test]
+    async fn test_without_retries_a_429_is_a_failure() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/chat/completions"))
+            .respond_with(ResponseTemplate::new(429))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let (results, failures) = BenchRunner::new()
+            .unwrap()
+            .run_detailed(&one_request(local_openai(&server), 0), |_, _| {})
+            .await
+            .unwrap();
+        assert_eq!((results.len(), failures.len()), (0, 1));
+    }
+
+    #[tokio::test]
+    async fn test_server_errors_retry_but_bad_requests_do_not() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/chat/completions"))
+            .respond_with(ResponseTemplate::new(503))
+            .expect(3)
+            .mount(&server)
+            .await;
+        let (_, failures) = BenchRunner::new()
+            .unwrap()
+            .run_detailed(&one_request(local_openai(&server), 2), |_, _| {})
+            .await
+            .unwrap();
+        assert_eq!(failures.len(), 1);
+        assert!(failures[0].error.contains("503"), "{}", failures[0].error);
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/chat/completions"))
+            .respond_with(ResponseTemplate::new(404))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let (_, failures) = BenchRunner::new()
+            .unwrap()
+            .run_detailed(&one_request(local_openai(&server), 3), |_, _| {})
+            .await
+            .unwrap();
+        assert_eq!(failures.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_transport_errors_say_why() {
+        // Nothing listens on port 9 of localhost.
+        let mut p = local_openai_unreachable();
+        p.base_url = "http://127.0.0.1:9".into();
+        let (_, failures) = BenchRunner::new()
+            .unwrap()
+            .run_detailed(&one_request(p, 0), |_, _| {})
+            .await
+            .unwrap();
+        let msg = &failures[0].error;
+        assert!(msg.contains("error sending request"), "{msg}");
+        // The cause chain is included (connection refused / actively refused).
+        assert!(msg.matches(": ").count() >= 2, "{msg}");
+    }
+
+    fn local_openai_unreachable() -> ProviderConfig {
+        ProviderConfig {
+            name: "openai".into(),
+            model: "local".into(),
+            api_key: String::new(),
+            base_url: String::new(),
+            max_tokens: 8,
+        }
+    }
+
+    #[test]
+    fn test_default_base_urls() {
+        assert_eq!(default_base_url("ollama"), Some(DEFAULT_OLLAMA_BASE_URL));
+        assert_eq!(default_base_url("gemini"), Some(DEFAULT_GEMINI_BASE_URL));
+        assert_eq!(default_base_url("nope"), None);
     }
 }

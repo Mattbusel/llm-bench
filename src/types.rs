@@ -24,8 +24,9 @@ pub struct BenchResult {
     /// The prompt that was sent.
     pub prompt: String,
 
-    /// Wall time from request dispatch to first token received (ms).
-    /// For non-streaming calls this equals `total_ms`.
+    /// Latency in ms: with `--stream`, the time from sending the request to
+    /// the first piece of answer text (time to first token); without it, the
+    /// time to the full response (equal to `total_ms`).
     pub latency_ms: u64,
 
     /// Wall time from request dispatch to full response received (ms).
@@ -48,6 +49,26 @@ pub struct BenchResult {
 
     /// Zero-based index of this run within the prompt's run batch.
     pub run_index: u32,
+
+    /// Time to first token in ms, only set for streamed requests
+    /// (`--stream`). Absent from the JSON otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ttft_ms: Option<u64>,
+
+    /// Retries this request needed before it succeeded (`--retries`).
+    /// Absent from the JSON when zero.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub retries: u32,
+
+    /// Time per output token after the first, in ms:
+    /// `(total_ms - ttft_ms) / (completion_tokens - 1)`. Streamed requests
+    /// with at least two completion tokens only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tpot_ms: Option<f64>,
+}
+
+fn is_zero(n: &u32) -> bool {
+    *n == 0
 }
 
 /// One request that failed, kept so the report can show real success rates
@@ -78,12 +99,24 @@ pub struct BenchConfig {
 
     /// One entry per provider+model combination to benchmark.
     pub providers: Vec<ProviderConfig>,
+
+    /// Stream responses (server-sent events) to measure time to first token.
+    pub stream: bool,
+
+    /// Retries per request on HTTP 408, 429, 5xx and connection failures.
+    pub retries: u32,
+
+    /// Requests sent to each model before measuring, and discarded (cold
+    /// starts, model loading on local servers).
+    pub warmup: u32,
 }
 
 /// Configuration for a single provider+model combination.
 #[derive(Debug, Clone)]
 pub struct ProviderConfig {
-    /// `"openai"` or `"anthropic"`.
+    /// Provider: `"openai"`, `"anthropic"`, `"ollama"`, `"openrouter"` or
+    /// `"gemini"`. Everything except `"anthropic"` speaks the OpenAI Chat
+    /// Completions format.
     pub name: String,
 
     /// Model identifier string sent verbatim to the API.
@@ -94,7 +127,9 @@ pub struct ProviderConfig {
     pub api_key: String,
 
     /// API base URL without the `/v1` suffix, e.g. `https://api.openai.com`
-    /// or `http://localhost:11434`. Empty means the provider's official URL.
+    /// or `http://localhost:11434`. Empty means the provider's default URL.
+    /// A URL that already ends in a version segment (`/v1beta/openai` for
+    /// Gemini) is used as is.
     pub base_url: String,
 
     /// Maximum completion tokens to request.
@@ -152,6 +187,9 @@ mod tests {
             tokens_per_second: 40.0,
             response_text: "Hi!".into(),
             run_index: 0,
+            ttft_ms: None,
+            retries: 0,
+            tpot_ms: None,
         }
     }
 
@@ -217,6 +255,9 @@ mod tests {
                 base_url: String::new(),
                 max_tokens: 512,
             }],
+            stream: false,
+            retries: 0,
+            warmup: 0,
         }
     }
 
@@ -376,6 +417,9 @@ mod tests {
             runs_per_prompt: 1,
             concurrency: 1,
             providers: vec![],
+            stream: false,
+            retries: 0,
+            warmup: 0,
         };
         assert!(c.prompts.is_empty());
     }
@@ -387,6 +431,9 @@ mod tests {
             runs_per_prompt: 0,
             concurrency: 1,
             providers: vec![],
+            stream: false,
+            retries: 0,
+            warmup: 0,
         };
         assert_eq!(c.runs_per_prompt, 0);
     }

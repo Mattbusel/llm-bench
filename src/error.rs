@@ -18,22 +18,31 @@ pub enum BenchError {
     /// The upstream API returned a non-2xx status code.
     #[error("API error from '{provider}' (model '{model}'): HTTP {status}  -  {body}")]
     ApiError {
+        /// Provider name.
         provider: String,
+        /// Model identifier.
         model: String,
+        /// HTTP status (200 for an error event inside a stream).
         status: u16,
+        /// Response body or error event.
         body: String,
     },
 
     /// The API responded with HTTP 429 (rate-limited).
     #[error("Rate limited by '{provider}': retry after {retry_after_secs:?}s")]
     RateLimited {
+        /// Provider name.
         provider: String,
+        /// Seconds from the `Retry-After` header, if sent.
         retry_after_secs: Option<u64>,
     },
 
     /// A configuration value is invalid or missing.
     #[error("Invalid configuration: {reason}")]
-    InvalidConfig { reason: String },
+    InvalidConfig {
+        /// What is wrong.
+        reason: String,
+    },
 
     /// An I/O error (file read/write, stdin).
     #[error("I/O error: {0}")]
@@ -44,12 +53,32 @@ pub enum BenchError {
     SerdeJson(#[from] serde_json::Error),
 
     /// An HTTP transport-level error (connection refused, timeout, etc.).
-    #[error("HTTP transport error: {0}")]
+    #[error("HTTP transport error: {}", error_chain(.0))]
     Http(#[from] reqwest::Error),
 
     /// A semaphore or task join error during concurrent execution.
     #[error("Concurrency error: {reason}")]
-    Concurrency { reason: String },
+    Concurrency {
+        /// What went wrong.
+        reason: String,
+    },
+}
+
+/// The error and its causes, joined with ": " (reqwest's own message is
+/// only "error sending request for url (...)"; the cause says why, e.g.
+/// "connection refused").
+fn error_chain(e: &dyn std::error::Error) -> String {
+    let mut out = e.to_string();
+    let mut src = e.source();
+    while let Some(s) = src {
+        let msg = s.to_string();
+        if !out.contains(&msg) {
+            out.push_str(": ");
+            out.push_str(&msg);
+        }
+        src = s.source();
+    }
+    out
 }
 
 //  Tests
