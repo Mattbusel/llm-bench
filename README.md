@@ -1,5 +1,13 @@
 # llm-bench
 
+<!-- outcome-block -->
+**Pick the fastest, cheapest LLM for your prompts from measurements on your own machine: time to first token, p95 latency, tokens per second, cost and success rate.**
+
+**Why this over the alternatives:** Leaderboards measure someone else's prompts on someone else's network. This runs yours against OpenAI, Anthropic, Ollama, Gemini, OpenRouter or any OpenAI-compatible server.
+
+**Guarantee:** if it doesn't do what this README says, [open an issue](https://github.com/Mattbusel/llm-bench/issues) and I'll fix it.
+<!-- outcome-block -->
+
 A command-line tool and Rust library for anyone choosing an LLM: it sends the same prompts to several models and measures time to first token, latency percentiles, tokens per second, cost and success rate, from your own machine.
 
 <p align="center">
