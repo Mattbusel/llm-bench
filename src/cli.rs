@@ -17,7 +17,9 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand, ValueEnum};
 
+use crate::config::{FileConfig, PriceTable};
 use crate::error::BenchError;
+use crate::runner::BUILTIN_PROVIDERS;
 use crate::types::{BenchConfig, ProviderConfig};
 
 /// Examples shown at the bottom of `llm-bench --help`.
@@ -29,29 +31,37 @@ const HELP_EXAMPLES: &str = "Examples:
   llm-bench run --models gpt-4o-mini --prompts \"Say hi\"
       One model, one prompt, 3 runs, results table.
 
-  llm-bench run --models gpt-4o-mini,claude-haiku-4-5 --prompt-file prompts.txt --runs 5
-      Compare two providers on your own prompts.
+  llm-bench run --models gpt-4o-mini,claude-haiku-4-5 --prompt-file prompts.txt --repeat 5 --stream
+      Compare two providers on your own prompts: TTFT, p50/p95 latency, tok/s, errors, cost.
+
+  llm-bench run --models groq:llama-3.3-70b-versatile,together:meta-llama/Llama-3.3-70B-Instruct-Turbo,fireworks:accounts/fireworks/models/llama-v3p3-70b-instruct --prompt-file prompts.txt --stream --concurrency 8
+      The same open model on three hosts (GROQ_API_KEY, TOGETHER_API_KEY, FIREWORKS_API_KEY).
+
+  llm-bench run --models deepseek:deepseek-v4-flash,openrouter:openai/gpt-4o-mini --prompts \"Say hi\" --output markdown
+      DeepSeek and OpenRouter, as a Markdown table for a PR or an issue.
+
+  llm-bench run --config llm-bench.toml --models vllm:my-model --prompts \"Say hi\" --stream
+      Any OpenAI-compatible server defined in a config file:
+        [providers.vllm]
+        base_url = \"http://localhost:8000/v1\"
+        [prices.my-model]          # optional, USD per 1M tokens
+        input = 0.10
+        output = 0.40
 
   llm-bench run --models ollama:llama3.2 --prompts \"Say hi\" --stream
-      A local Ollama model, no key needed; --stream adds time to first token.
-
-  llm-bench run --models openrouter:meta-llama/llama-3.3-70b-instruct,gemini:gemini-2.5-flash --prompts \"Say hi\"
-      OpenRouter (OPENROUTER_API_KEY) and Gemini (GEMINI_API_KEY).
-
-  llm-bench run --openai-base-url http://localhost:8000 --models openai:my-model --prompts \"Say hi\"
-      Any OpenAI-compatible server (vLLM, LM Studio, a proxy); no key needed.";
+      A local Ollama model, no key needed.";
 
 //  Top-level CLI
 
 /// Universal LLM provider benchmark CLI.
 ///
-/// Compare OpenAI and Anthropic models on latency, cost, quality, and
-/// token throughput from the command line.
+/// Compare providers and models on your own prompts: time to first token,
+/// p50/p95 latency, tokens per second, error rate and cost.
 #[derive(Debug, Parser)]
 #[command(
     name = "llm-bench",
     version,
-    about = "Benchmark LLMs (OpenAI, Anthropic, Ollama, OpenRouter, Gemini, any OpenAI-compatible server) on latency, cost and throughput",
+    about = "Compare LLM providers on your own prompts (OpenAI, Anthropic, OpenRouter, Groq, Together, Fireworks, DeepSeek, Gemini, Ollama, any OpenAI-compatible URL): TTFT, p50/p95 latency, tokens/s, error rate and cost",
     long_about = None,
     after_help = HELP_EXAMPLES
 )]
@@ -78,8 +88,14 @@ pub enum Command {
 //  `run` sub-command
 
 /// Arguments for the `run` sub-command.
-#[derive(Debug, Parser)]
+#[derive(Debug, Default, Parser)]
 pub struct RunArgs {
+    /// TOML file with extra OpenAI-compatible providers (`[providers.NAME]
+    /// base_url = ...`, `api_key_env = ...`) and prices (`[prices."MODEL"]
+    /// input = ..., output = ...`, USD per 1M tokens).
+    #[arg(long, env = "LLM_BENCH_CONFIG")]
+    pub config: Option<PathBuf>,
+
     /// OpenAI API key. Falls back to OPENAI_API_KEY environment variable.
     #[arg(long, env = "OPENAI_API_KEY", hide_env_values = true)]
     pub openai_key: Option<String>,
@@ -106,6 +122,22 @@ pub struct RunArgs {
     #[arg(long, env = "GEMINI_API_KEY", hide_env_values = true)]
     pub gemini_key: Option<String>,
 
+    /// Groq API key, for `groq:` models.
+    #[arg(long, env = "GROQ_API_KEY", hide_env_values = true)]
+    pub groq_key: Option<String>,
+
+    /// Together AI API key, for `together:` models.
+    #[arg(long, env = "TOGETHER_API_KEY", hide_env_values = true)]
+    pub together_key: Option<String>,
+
+    /// Fireworks AI API key, for `fireworks:` models.
+    #[arg(long, env = "FIREWORKS_API_KEY", hide_env_values = true)]
+    pub fireworks_key: Option<String>,
+
+    /// DeepSeek API key, for `deepseek:` models.
+    #[arg(long, env = "DEEPSEEK_API_KEY", hide_env_values = true)]
+    pub deepseek_key: Option<String>,
+
     /// Ollama server for `ollama:` models (default http://localhost:11434).
     /// `OLLAMA_HOST` is read too, with or without `http://`.
     #[arg(long, env = "OLLAMA_HOST")]
@@ -113,9 +145,11 @@ pub struct RunArgs {
 
     /// Comma-separated list of model identifiers to benchmark.
     ///
-    /// Prefix with the provider: `openai:`, `anthropic:`, `ollama:`,
-    /// `openrouter:` or `gemini:`. Bare `gpt-*`, `o1*`, `o3*`, `o4*`,
-    /// `claude-*` and `gemini-*` names are matched automatically.
+    /// Prefix with the provider: `openai:`, `anthropic:`, `openrouter:`,
+    /// `groq:`, `together:`, `fireworks:`, `deepseek:`, `gemini:`,
+    /// `ollama:` or a provider from `--config`. Bare `gpt-*`, `o1*`, `o3*`,
+    /// `o4*`, `claude-*`, `gemini-*` and `deepseek-*` names are matched
+    /// automatically.
     #[arg(
         long,
         value_delimiter = ',',
@@ -131,11 +165,12 @@ pub struct RunArgs {
     #[arg(long)]
     pub prompt_file: Option<PathBuf>,
 
-    /// Number of times each prompt is sent to each model.
-    #[arg(long, default_value_t = 3)]
+    /// Number of times each prompt is sent to each model (`--repeat` is
+    /// the same flag).
+    #[arg(long, visible_alias = "repeat", default_value_t = 3)]
     pub runs: u32,
 
-    /// Maximum number of concurrent in-flight API calls.
+    /// Maximum number of requests in flight at once, across all models.
     #[arg(long, default_value_t = 4)]
     pub concurrency: usize,
 
@@ -146,6 +181,10 @@ pub struct RunArgs {
     /// Save full JSON results to this file.
     #[arg(long)]
     pub output_file: Option<PathBuf>,
+
+    /// Also write the comparison table as Markdown to this file.
+    #[arg(long)]
+    pub markdown_file: Option<PathBuf>,
 
     /// Maximum completion tokens per request.
     #[arg(long, default_value_t = 512)]
@@ -173,10 +212,14 @@ pub struct RunArgs {
 }
 
 /// Output format selector.
-#[derive(Debug, Clone, ValueEnum)]
+#[derive(Debug, Clone, Default, ValueEnum)]
 pub enum OutputFormat {
-    /// Pretty ASCII table (default).
+    /// Comparison table for the terminal (default).
+    #[default]
     Table,
+    /// The comparison table as GitHub-flavoured Markdown.
+    #[value(alias = "md")]
+    Markdown,
     /// JSON array of all BenchResult records.
     Json,
     /// CSV, one row per successful request.
@@ -185,20 +228,40 @@ pub enum OutputFormat {
 
 //  Config builder
 
-/// Build a `BenchConfig` from parsed `RunArgs`.
+/// Build a `BenchConfig` from parsed `RunArgs`; see [`build_plan`], which
+/// also returns the `[prices]` from the `--config` file.
 ///
-/// Resolves prompts from both inline `--prompts` and `--prompt-file`,
-/// and maps model strings to `ProviderConfig` entries.
+/// # Errors
+/// As [`build_plan`].
+///
+/// # Panics
+/// This function never panics.
+pub fn build_config(args: &RunArgs) -> Result<BenchConfig, BenchError> {
+    build_plan(args).map(|(config, _)| config)
+}
+
+/// Build the benchmark from parsed `RunArgs`: prompts from `--prompts` and
+/// `--prompt-file`, one `ProviderConfig` per `--models` entry (keys from
+/// the flags, their environment variables or the `--config` file), and the
+/// `[prices]` table from the `--config` file.
 ///
 /// # Errors
 /// Returns `BenchError::InvalidConfig` if:
 /// - No prompts are provided via either flag.
 /// - A model string cannot be resolved to a known provider.
-/// - An API key is missing for a required provider.
+/// - An API key is missing for a hosted provider.
+/// - The `--config` file is invalid.
+///
+/// Returns `BenchError::Io` if the prompt or config file cannot be read.
 ///
 /// # Panics
 /// This function never panics.
-pub fn build_config(args: &RunArgs) -> Result<BenchConfig, BenchError> {
+pub fn build_plan(args: &RunArgs) -> Result<(BenchConfig, PriceTable), BenchError> {
+    let file = match &args.config {
+        Some(path) => FileConfig::load(path)?,
+        None => FileConfig::default(),
+    };
+
     //  Collect prompts
     let mut prompts: Vec<String> = args.prompts.clone();
 
@@ -227,48 +290,87 @@ pub fn build_config(args: &RunArgs) -> Result<BenchConfig, BenchError> {
             continue;
         }
 
-        let (provider_name, model) = resolve_model(model_str)?;
+        let (provider_name, model) = resolve_model_with(model_str, &file)?;
+        let builtin = BUILTIN_PROVIDERS
+            .iter()
+            .find(|(n, _)| *n == provider_name)
+            .map(|(_, env)| *env);
 
         let key = |k: &Option<String>| k.as_deref().unwrap_or("").trim().to_owned();
-        let (api_key, base_url, env_var) = match provider_name {
-            "openai" => (
-                key(&args.openai_key),
-                normalize_base_url(args.openai_base_url.as_deref()),
-                "OPENAI_API_KEY",
-            ),
-            "anthropic" => (
-                key(&args.anthropic_key),
-                normalize_base_url(args.anthropic_base_url.as_deref()),
-                "ANTHROPIC_API_KEY",
-            ),
-            "openrouter" => (key(&args.openrouter_key), String::new(), "OPENROUTER_API_KEY"),
-            "gemini" => (key(&args.gemini_key), String::new(), "GEMINI_API_KEY"),
-            "ollama" => (
-                String::new(),
-                normalize_ollama_url(args.ollama_url.as_deref()),
-                "",
-            ),
-            other => {
+        let flag_key = match provider_name.as_str() {
+            "openai" => key(&args.openai_key),
+            "anthropic" => key(&args.anthropic_key),
+            "openrouter" => key(&args.openrouter_key),
+            "gemini" => key(&args.gemini_key),
+            "groq" => key(&args.groq_key),
+            "together" => key(&args.together_key),
+            "fireworks" => key(&args.fireworks_key),
+            "deepseek" => key(&args.deepseek_key),
+            _ => String::new(),
+        };
+        let api_key = if flag_key.is_empty() {
+            file.api_key(&provider_name)
+        } else {
+            flag_key
+        };
+        // The config file asked for a key from a variable that is not set:
+        // say so now instead of sending every request without a key.
+        if api_key.is_empty() {
+            if let Some(var) = file.missing_key_env(&provider_name) {
                 return Err(BenchError::InvalidConfig {
-                    reason: format!("unknown provider '{other}'"),
-                })
+                    reason: format!(
+                        "provider '{provider_name}' in the --config file reads its key from \
+                         api_key_env = \"{var}\", but {var} is not set (needed for model '{model}').\n  \
+                         Fix: set {var}, or remove the api_key_env line if the server needs no key."
+                    ),
+                });
             }
+        }
+
+        // A flag wins over the config file. OpenAI and Anthropic URLs drop a
+        // trailing /v1 (the request path adds it); other OpenAI-compatible
+        // URLs are used as given, so a path such as Groq's /openai/v1 stays.
+        let flag_url = match provider_name.as_str() {
+            "openai" => args.openai_base_url.as_deref(),
+            "anthropic" => args.anthropic_base_url.as_deref(),
+            "ollama" => args.ollama_url.as_deref(),
+            _ => None,
+        }
+        .filter(|u| !u.trim().is_empty());
+        let raw_url = flag_url.or_else(|| file.base_url(&provider_name));
+        let base_url = match provider_name.as_str() {
+            "openai" | "anthropic" => normalize_base_url(raw_url),
+            "ollama" => normalize_ollama_url(raw_url),
+            _ => raw_url.unwrap_or("").trim().trim_end_matches('/').to_owned(),
         };
 
-        // Hosted endpoints need a key; a custom base URL (local server,
-        // proxy) and Ollama may not.
-        if api_key.is_empty() && base_url.is_empty() && provider_name != "ollama" {
-            return Err(BenchError::InvalidConfig {
-                reason: format!(
-                    "no API key for {provider_name} (needed for model '{model}').\n  \
-                     Fix: set {env_var} (bash: export {env_var}=...  PowerShell: $env:{env_var}=\"...\")\n  \
-                     or pass --{provider_name}-key <KEY>, or leave '{model}' out of --models."
-                ),
-            });
+        match builtin {
+            // Hosted endpoints need a key; a custom base URL (local server,
+            // proxy) and Ollama may not.
+            Some(env_var) => {
+                if api_key.is_empty() && base_url.is_empty() && provider_name != "ollama" {
+                    return Err(BenchError::InvalidConfig {
+                        reason: format!(
+                            "no API key for {provider_name} (needed for model '{model}').\n  \
+                             Fix: set {env_var} (bash: export {env_var}=...  PowerShell: $env:{env_var}=\"...\")\n  \
+                             or pass --{provider_name}-key <KEY>, or leave '{model}' out of --models."
+                        ),
+                    });
+                }
+            }
+            None => {
+                if base_url.is_empty() {
+                    return Err(BenchError::InvalidConfig {
+                        reason: format!(
+                            "provider '{provider_name}' has no base_url in the --config file"
+                        ),
+                    });
+                }
+            }
         }
 
         providers.push(ProviderConfig {
-            name: provider_name.to_owned(),
+            name: provider_name.clone(),
             model: model.to_owned(),
             api_key,
             base_url,
@@ -282,7 +384,7 @@ pub fn build_config(args: &RunArgs) -> Result<BenchConfig, BenchError> {
         });
     }
 
-    Ok(BenchConfig {
+    let config = BenchConfig {
         prompts,
         runs_per_prompt: args.runs,
         concurrency: args.concurrency,
@@ -290,7 +392,8 @@ pub fn build_config(args: &RunArgs) -> Result<BenchConfig, BenchError> {
         stream: args.stream,
         retries: args.retries,
         warmup: args.warmup,
-    })
+    };
+    Ok((config, file.price_table()))
 }
 
 /// Normalise a user-supplied base URL: trim whitespace, trailing slashes and a
@@ -324,8 +427,48 @@ fn normalize_ollama_url(raw: Option<&str>) -> String {
     normalize_base_url(Some(&fixed))
 }
 
-/// Provider prefixes accepted in `--models`.
-const PREFIXES: [&str; 5] = ["openai", "anthropic", "ollama", "openrouter", "gemini"];
+/// Built-in provider prefixes accepted in `--models`.
+const PREFIXES: [&str; 9] = [
+    "openai",
+    "anthropic",
+    "ollama",
+    "openrouter",
+    "gemini",
+    "groq",
+    "together",
+    "fireworks",
+    "deepseek",
+];
+
+/// [`resolve_model`], plus the provider names defined in a config file.
+///
+/// Order: an explicit built-in prefix (`groq:...`), then a provider named
+/// in the config file (`my-server:...`), then the bare-name rules
+/// (`gpt-*`, `claude-*`, ...). Config names come before the bare-name rules
+/// so that `[providers.deepseek-local]` or `[providers.gpt-proxy]` is not
+/// mistaken for a `deepseek-*` or `gpt-*` model on the vendor's own API.
+fn resolve_model_with<'a>(s: &'a str, file: &FileConfig) -> Result<(String, &'a str), BenchError> {
+    if let Some((p, m)) = resolve_builtin_prefix(s) {
+        return Ok((p.to_owned(), m));
+    }
+    if let Some((p, rest)) = s.split_once(':') {
+        if file.providers.contains_key(p) && !rest.is_empty() {
+            return Ok((p.to_owned(), rest));
+        }
+    }
+    resolve_model(s).map(|(p, m)| (p.to_owned(), m))
+}
+
+/// `"groq:llama"` -> `("groq", "llama")` for a built-in prefix followed by a
+/// non-empty model id.
+fn resolve_builtin_prefix(s: &str) -> Option<(&'static str, &str)> {
+    PREFIXES.into_iter().find_map(|p| {
+        s.strip_prefix(p)
+            .and_then(|r| r.strip_prefix(':'))
+            .filter(|rest| !rest.is_empty())
+            .map(|rest| (p, rest))
+    })
+}
 
 /// Resolve a model string to `(provider_name, model_id)`.
 ///
@@ -337,12 +480,8 @@ const PREFIXES: [&str; 5] = ["openai", "anthropic", "ollama", "openrouter", "gem
 /// # Panics
 /// This function never panics.
 fn resolve_model(s: &str) -> Result<(&'static str, &str), BenchError> {
-    for p in PREFIXES {
-        if let Some(rest) = s.strip_prefix(p).and_then(|r| r.strip_prefix(':')) {
-            if !rest.is_empty() {
-                return Ok((p, rest));
-            }
-        }
+    if let Some(hit) = resolve_builtin_prefix(s) {
+        return Ok(hit);
     }
 
     // Auto-detect from known model name prefixes
@@ -360,11 +499,15 @@ fn resolve_model(s: &str) -> Result<(&'static str, &str), BenchError> {
     if s.starts_with("gemini-") {
         return Ok(("gemini", s));
     }
+    if s.starts_with("deepseek-") {
+        return Ok(("deepseek", s));
+    }
 
     Err(BenchError::InvalidConfig {
         reason: format!(
             "Cannot determine provider for model '{s}'. \
-             Prefix it with openai:, anthropic:, ollama:, openrouter: or gemini:, e.g. ollama:{s}"
+             Prefix it with a provider ({}) or one from --config, e.g. ollama:{s}",
+            PREFIXES.join(", ")
         ),
     })
 }
@@ -491,6 +634,7 @@ mod tests {
             retries: 0,
             warmup: 0,
             summary_file: None,
+            ..RunArgs::default()
         }
     }
 
@@ -550,6 +694,7 @@ mod tests {
             retries: 0,
             warmup: 0,
             summary_file: None,
+            ..RunArgs::default()
         };
         let result = build_config(&args);
         assert!(result.is_err());
@@ -581,6 +726,7 @@ mod tests {
             retries: 0,
             warmup: 0,
             summary_file: None,
+            ..RunArgs::default()
         };
         let result = build_config(&args);
         assert!(result.is_err());
@@ -612,6 +758,7 @@ mod tests {
             retries: 0,
             warmup: 0,
             summary_file: None,
+            ..RunArgs::default()
         };
         let result = build_config(&args);
         assert!(result.is_err());
@@ -639,6 +786,7 @@ mod tests {
             retries: 0,
             warmup: 0,
             summary_file: None,
+            ..RunArgs::default()
         };
         let config = build_config(&args).unwrap_or_else(|_| unreachable!());
         assert_eq!(config.providers[0].model, "gpt-4o");
@@ -666,6 +814,7 @@ mod tests {
             retries: 0,
             warmup: 0,
             summary_file: None,
+            ..RunArgs::default()
         };
         let config = build_config(&args).unwrap_or_else(|_| unreachable!());
         assert_eq!(config.providers.len(), 2);
@@ -700,6 +849,7 @@ mod tests {
             retries: 0,
             warmup: 0,
             summary_file: None,
+            ..RunArgs::default()
         };
         let result = build_config(&args);
         assert!(result.is_err());
@@ -746,6 +896,7 @@ mod tests {
             retries: 0,
             warmup: 0,
             summary_file: None,
+            ..RunArgs::default()
         };
         let config = build_config(&args).unwrap_or_else(|_| unreachable!());
         assert_eq!(config.prompts.len(), 2);
@@ -804,6 +955,220 @@ mod tests {
         let c = build_config(&args).unwrap();
         assert!(c.stream);
         assert_eq!(c.retries, 3);
+    }
+
+    //  0.4: new providers, --config, --repeat
+
+    fn args(models: &[&str]) -> RunArgs {
+        RunArgs {
+            models: models.iter().map(|m| (*m).to_owned()).collect(),
+            prompts: vec!["hi".into()],
+            runs: 1,
+            concurrency: 1,
+            max_tokens: 16,
+            ..RunArgs::default()
+        }
+    }
+
+    fn write_temp(name: &str, text: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "llm_bench_{name}_{}_{}.toml",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::write(&path, text).unwrap();
+        path
+    }
+
+    #[test]
+    fn test_new_hosted_providers_resolve_and_need_keys() {
+        for (prefix, env) in [
+            ("groq", "GROQ_API_KEY"),
+            ("together", "TOGETHER_API_KEY"),
+            ("fireworks", "FIREWORKS_API_KEY"),
+            ("deepseek", "DEEPSEEK_API_KEY"),
+        ] {
+            let mut a = args(&[&format!("{prefix}:some/model:tag")]);
+            let err = build_config(&a).err().map(|e| e.to_string()).unwrap_or_default();
+            assert!(err.contains(env), "{prefix}: {err}");
+            assert!(err.contains(&format!("--{prefix}-key")), "{prefix}: {err}");
+            let k = Some(format!("{prefix}-secret"));
+            match prefix {
+                "groq" => a.groq_key = k,
+                "together" => a.together_key = k,
+                "fireworks" => a.fireworks_key = k,
+                _ => a.deepseek_key = k,
+            }
+            let c = build_config(&a).unwrap();
+            assert_eq!(c.providers[0].name, prefix);
+            assert_eq!(c.providers[0].model, "some/model:tag");
+            assert_eq!(c.providers[0].api_key, format!("{prefix}-secret"));
+            assert_eq!(c.providers[0].base_url, "");
+        }
+        assert_eq!(resolve_model("deepseek-v4-flash").ok(), Some(("deepseek", "deepseek-v4-flash")));
+    }
+
+    #[test]
+    fn test_config_file_custom_provider_overrides_and_prices() {
+        let path = write_temp(
+            "cfg",
+            r#"
+[providers.vllm]
+base_url = "http://127.0.0.1:8000/v1/"
+
+[providers.groq]
+base_url = "https://gateway.example/groq/openai/v1"
+api_key = "from-file"
+
+[prices."vllm:qwen2.5:0.5b"]
+input = 0.1
+output = 0.2
+"#,
+        );
+        let mut a = args(&["vllm:qwen2.5:0.5b", "groq:llama-3.3-70b-versatile"]);
+        a.config = Some(path.clone());
+        let (c, prices) = build_plan(&a).unwrap();
+        // Custom provider: no key needed, URL kept with its /v1.
+        assert_eq!(c.providers[0].name, "vllm");
+        assert_eq!(c.providers[0].model, "qwen2.5:0.5b");
+        assert_eq!(c.providers[0].base_url, "http://127.0.0.1:8000/v1");
+        assert!(c.providers[0].api_key.is_empty());
+        // Built-in provider pointed elsewhere, key from the file.
+        assert_eq!(c.providers[1].base_url, "https://gateway.example/groq/openai/v1");
+        assert_eq!(c.providers[1].api_key, "from-file");
+        assert_eq!(prices.get("vllm", "qwen2.5:0.5b").map(|p| p.output), Some(0.2));
+        // A flag key beats the file.
+        a.groq_key = Some("from-flag".into());
+        assert_eq!(build_config(&a).unwrap().providers[1].api_key, "from-flag");
+        // Unknown prefix without a config entry.
+        let mut b = args(&["nope:model"]);
+        b.config = Some(path.clone());
+        assert!(build_config(&b).is_err());
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_config_provider_named_like_a_model_family_wins_over_bare_name_rules() {
+        // Names that start like deepseek-*, gpt-*, claude-*, gemini-* or o3*
+        // models must still route to the configured URL, not the vendor.
+        let path = write_temp(
+            "lookalike",
+            r#"
+[providers.deepseek-local]
+base_url = "http://127.0.0.1:9/v1"
+
+[providers.gpt-proxy]
+base_url = "http://127.0.0.1:9/proxy/v1"
+
+[providers.claude-gw]
+base_url = "http://127.0.0.1:9/claude"
+
+[providers.o3-mirror]
+base_url = "http://127.0.0.1:9/o3"
+"#,
+        );
+        let mut a = args(&["deepseek-local:foo", "gpt-proxy:gpt-4o", "claude-gw:bar", "o3-mirror:o3"]);
+        a.config = Some(path.clone());
+        // No DEEPSEEK/OPENAI/ANTHROPIC key is set on `a`; this used to fail
+        // with "no API key for deepseek".
+        let c = build_config(&a).unwrap();
+        let got: Vec<_> = c
+            .providers
+            .iter()
+            .map(|p| (p.name.as_str(), p.model.as_str(), p.base_url.as_str()))
+            .collect();
+        assert_eq!(
+            got,
+            [
+                ("deepseek-local", "foo", "http://127.0.0.1:9/v1"),
+                ("gpt-proxy", "gpt-4o", "http://127.0.0.1:9/proxy/v1"),
+                ("claude-gw", "bar", "http://127.0.0.1:9/claude"),
+                ("o3-mirror", "o3", "http://127.0.0.1:9/o3"),
+            ]
+        );
+        // Bare names and explicit built-in prefixes are unchanged.
+        let file = FileConfig::parse("[providers.deepseek-local]
+base_url = \"http://x\"").unwrap();
+        assert_eq!(
+            resolve_model_with("deepseek-chat", &file).ok(),
+            Some(("deepseek".to_owned(), "deepseek-chat"))
+        );
+        assert_eq!(
+            resolve_model_with("deepseek:deepseek-local:foo", &file).ok(),
+            Some(("deepseek".to_owned(), "deepseek-local:foo"))
+        );
+        assert_eq!(
+            resolve_model_with("deepseek-local:foo", &file).ok(),
+            Some(("deepseek-local".to_owned(), "foo"))
+        );
+        // Without the config entry the old bare-name rule still applies.
+        assert_eq!(
+            resolve_model_with("deepseek-local:foo", &FileConfig::default()).ok(),
+            Some(("deepseek".to_owned(), "deepseek-local:foo"))
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_config_api_key_env_unset_is_a_setup_error() {
+        let path = write_temp(
+            "keyenv",
+            r#"
+[providers.myhost]
+base_url = "http://127.0.0.1:9/v1"
+api_key_env = "LLM_BENCH_TEST_UNSET_VARIABLE_2"
+
+[providers.groq]
+base_url = "http://127.0.0.1:9/groq"
+api_key_env = "LLM_BENCH_TEST_UNSET_VARIABLE_3"
+"#,
+        );
+        let mut a = args(&["myhost:m"]);
+        a.config = Some(path.clone());
+        let err = build_config(&a).err().map(|e| e.to_string()).unwrap_or_default();
+        assert!(err.contains("LLM_BENCH_TEST_UNSET_VARIABLE_2"), "{err}");
+        assert!(err.contains("myhost"), "{err}");
+        // A built-in provider redirected by the file: the flag key (or its
+        // usual variable) still satisfies it; without one, the same error.
+        let mut g = args(&["groq:llama"]);
+        g.config = Some(path.clone());
+        let err = build_config(&g).err().map(|e| e.to_string()).unwrap_or_default();
+        assert!(err.contains("LLM_BENCH_TEST_UNSET_VARIABLE_3"), "{err}");
+        g.groq_key = Some("gk".into());
+        assert_eq!(build_config(&g).unwrap().providers[0].api_key, "gk");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_config_file_errors_name_the_file() {
+        let path = write_temp("bad", "[providers.x]\nbase_urll = 'typo'\n");
+        let mut a = args(&["gpt-4o-mini"]);
+        a.openai_key = Some("k".into());
+        a.config = Some(path.clone());
+        let err = build_config(&a).err().map(|e| e.to_string()).unwrap_or_default();
+        assert!(err.contains("base_urll"), "{err}");
+        assert!(err.contains(&path.display().to_string()), "{err}");
+        let _ = std::fs::remove_file(&path);
+        a.config = Some(PathBuf::from("/nonexistent/llm-bench.toml"));
+        assert!(matches!(build_config(&a), Err(BenchError::Io(_))));
+    }
+
+    #[test]
+    fn test_repeat_alias_markdown_output_and_flags_parse() {
+        let cli = Cli::try_parse_from([
+            "llm-bench", "run", "--models", "ollama:x", "--prompts", "hi", "--repeat", "7",
+            "--concurrency", "5", "--output", "md", "--markdown-file", "out.md",
+        ])
+        .unwrap();
+        let Command::Run(a) = cli.command else { unreachable!() };
+        assert_eq!((a.runs, a.concurrency), (7, 5));
+        assert!(matches!(a.output, OutputFormat::Markdown));
+        assert_eq!(a.markdown_file, Some(PathBuf::from("out.md")));
+        let c = build_config(&a).unwrap();
+        assert_eq!((c.runs_per_prompt, c.concurrency), (7, 5));
     }
 
     //  OutputFormat

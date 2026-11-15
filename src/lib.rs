@@ -9,6 +9,7 @@
 #[cfg(feature = "cli")]
 #[cfg_attr(docsrs, doc(cfg(feature = "cli")))]
 pub mod cli;
+pub mod config;
 pub mod error;
 pub mod providers;
 pub mod report;

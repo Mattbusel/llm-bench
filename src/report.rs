@@ -1,9 +1,11 @@
 //! # Module: Report
 //!
 //! ## Responsibility
-//! Aggregate raw `BenchResult` records into `BenchSummary` statistics
-//! (p50/p99 latency, throughput, cost) and render them to the terminal
-//! or serialise them to JSON.
+//! Render benchmark results: the provider comparison table (time to first
+//! token, p50/p95 total latency, tokens per second, error rate, cost per
+//! request) for the terminal and as Markdown, the per-request JSON and CSV,
+//! and the older `BenchSummary` aggregation (p50/p99 latency, throughput,
+//! cost) kept for library users.
 //!
 //! ## Guarantees
 //! - `generate_summary` is deterministic for a given input slice.
@@ -23,10 +25,171 @@ use tabled::settings::object::Columns;
 #[cfg(feature = "cli")]
 use tabled::settings::{Alignment, Modify, Style};
 #[cfg(feature = "cli")]
-use tabled::{Table, Tabled};
+use tabled::{builder::Builder, Table, Tabled};
 
 use crate::error::BenchError;
+use crate::stats::{ModelReport, Stats};
 use crate::types::{BenchFailure, BenchResult, BenchSummary};
+
+//  Comparison table (0.4)
+
+/// Column headers of the comparison table, in order.
+pub const COMPARISON_HEADERS: [&str; 9] = [
+    "Model",
+    "OK",
+    "Errors",
+    "TTFT p50 (ms)",
+    "Total p50 (ms)",
+    "Total p95 (ms)",
+    "Tok/s",
+    "Cost/req",
+    "Total cost",
+];
+
+/// One row of cells per model, in the order of [`COMPARISON_HEADERS`]:
+/// `provider:model`, successful/attempted requests, error rate, time to
+/// first token p50 (`-` unless streamed), total latency p50 and p95,
+/// median tokens per second, mean cost per successful request and total
+/// cost (`n/a` for a model without a price, `-` when every request failed).
+///
+/// # Panics
+/// This function never panics.
+pub fn comparison_rows(reports: &[ModelReport]) -> Vec<[String; 9]> {
+    reports
+        .iter()
+        .map(|m| {
+            let dead = m.succeeded == 0;
+            let dash = || "-".to_owned();
+            let ms = |s: Option<Stats>, f: fn(&Stats) -> f64| {
+                s.filter(|_| !dead)
+                    .map_or_else(dash, |s| format!("{:.0}", f(&s)))
+            };
+            let money = |v: f64| {
+                if dead {
+                    dash()
+                } else if m.cost_per_request_usd.is_none() {
+                    "n/a".to_owned()
+                } else {
+                    format!("${v:.6}")
+                }
+            };
+            [
+                format!("{}:{}", m.provider, m.model),
+                format!("{}/{}", m.succeeded, m.succeeded + m.failed),
+                format!("{:.1}%", m.error_rate * 100.0),
+                ms(m.ttft_ms, |s| s.p50),
+                ms(m.total_ms, |s| s.p50),
+                ms(m.total_ms, |s| s.p95),
+                m.tokens_per_second
+                    .filter(|_| !dead)
+                    .map_or_else(dash, |s| format!("{:.1}", s.p50)),
+                money(m.cost_per_request_usd.unwrap_or(0.0)),
+                money(m.total_cost_usd),
+            ]
+        })
+        .collect()
+}
+
+/// The comparison table as a GitHub-flavoured Markdown table (numbers
+/// right-aligned), followed by the verdict line when two or more models
+/// produced results. Pipes in model names are escaped.
+///
+/// # Panics
+/// This function never panics.
+pub fn markdown_table(reports: &[ModelReport]) -> String {
+    let esc = |c: &str| c.replace('|', "\\|");
+    let mut out = String::new();
+    out.push_str(&format!("| {} |\n", COMPARISON_HEADERS.join(" | ")));
+    out.push_str("|:---|");
+    out.push_str(&"---:|".repeat(COMPARISON_HEADERS.len() - 1));
+    out.push('\n');
+    for row in comparison_rows(reports) {
+        let cells: Vec<String> = row.iter().map(|c| esc(c)).collect();
+        out.push_str(&format!("| {} |\n", cells.join(" | ")));
+    }
+    if let Some(v) = comparison_verdict(reports) {
+        out.push('\n');
+        out.push_str(&v);
+        out.push('\n');
+    }
+    out
+}
+
+/// "Fastest / Highest throughput / Cheapest" line under the comparison
+/// table, or `None` when fewer than two models produced results. Fastest is
+/// by time to first token when every model was streamed, else by total p50;
+/// cheapest compares only models with a price.
+///
+/// # Panics
+/// This function never panics.
+pub fn comparison_verdict(reports: &[ModelReport]) -> Option<String> {
+    let live: Vec<&ModelReport> = reports.iter().filter(|m| m.succeeded > 0).collect();
+    if live.len() < 2 {
+        return None;
+    }
+    let name = |m: &ModelReport| format!("{}:{}", m.provider, m.model);
+    let all_ttft = live.iter().all(|m| m.ttft_ms.is_some());
+    let (label, key): (&str, fn(&ModelReport) -> Option<f64>) = if all_ttft {
+        ("TTFT p50", |m| m.ttft_ms.map(|s| s.p50))
+    } else {
+        ("total p50", |m| m.total_ms.map(|s| s.p50))
+    };
+    let mut parts = Vec::new();
+    if let Some((m, v)) = live
+        .iter()
+        .filter_map(|m| key(m).map(|v| (*m, v)))
+        .min_by(|a, b| a.1.total_cmp(&b.1))
+    {
+        parts.push(format!("Fastest: {} ({label} {v:.0} ms)", name(m)));
+    }
+    if let Some((m, v)) = live
+        .iter()
+        .filter_map(|m| m.tokens_per_second.map(|s| (*m, s.p50)))
+        .max_by(|a, b| a.1.total_cmp(&b.1))
+    {
+        parts.push(format!("Highest throughput: {} ({v:.1} tok/s)", name(m)));
+    }
+    let priced: Vec<(&ModelReport, f64)> = live
+        .iter()
+        .filter_map(|m| m.cost_per_request_usd.map(|c| (*m, c)))
+        .collect();
+    if priced.len() >= 2 {
+        if let Some((m, c)) = priced.iter().min_by(|a, b| a.1.total_cmp(&b.1)) {
+            parts.push(format!("Cheapest: {} (${c:.6} per request)", name(m)));
+        }
+    }
+    (!parts.is_empty()).then(|| parts.join("   "))
+}
+
+/// Print the comparison table to stdout (feature `cli`), with the verdict
+/// line under it.
+///
+/// # Panics
+/// This function never panics.
+#[cfg(feature = "cli")]
+pub fn print_comparison(reports: &[ModelReport]) {
+    if reports.is_empty() {
+        println!("{}", "No results to display.".yellow());
+        return;
+    }
+    let mut b = Builder::default();
+    b.push_record(COMPARISON_HEADERS);
+    for row in comparison_rows(reports) {
+        b.push_record(row);
+    }
+    let mut table = b.build();
+    table
+        .with(Style::rounded())
+        .with(Modify::new(Columns::new(1..)).with(Alignment::right()));
+    println!("\n{}", table.to_string().cyan());
+    if let Some(line) = comparison_verdict(reports) {
+        println!("{}", line.green());
+    }
+    if reports.iter().any(|m| m.succeeded > 0 && m.ttft_ms.is_none()) {
+        println!("{}", "TTFT needs --stream.".dimmed());
+    }
+    println!();
+}
 
 //  Summary generation
 
@@ -420,6 +583,9 @@ mod tests {
             ttft_ms: None,
             retries: 0,
             tpot_ms: None,
+            cached_prompt_tokens: 0,
+            cache_write_prompt_tokens: 0,
+            cost_source: None,
         }
     }
 
@@ -728,6 +894,78 @@ mod tests {
         let arr: serde_json::Value = serde_json::from_str(&json).unwrap_or_default();
         let arr_len = arr.as_array().map(|a| a.len()).unwrap_or(0);
         assert_eq!(arr_len, 3);
+    }
+
+    //  comparison table
+
+    fn streamed(provider: &str, model: &str, ttft: u64, total: u64, cost: Option<f64>) -> BenchResult {
+        let mut r = make_result(provider, model, ttft, cost.unwrap_or(0.0), 100.0);
+        r.ttft_ms = Some(ttft);
+        r.total_ms = total;
+        r.cost_source = cost.map(|_| crate::types::CostSource::LlmPrices);
+        r
+    }
+
+    #[test]
+    fn test_comparison_rows_and_markdown() {
+        let results = vec![
+            streamed("groq", "llama|70b", 100, 400, None),
+            streamed("groq", "llama|70b", 120, 500, None),
+            streamed("openai", "gpt-4o-mini", 300, 900, Some(0.0002)),
+            streamed("openai", "gpt-4o-mini", 340, 1000, Some(0.0004)),
+        ];
+        let failures = vec![
+            fail("openai", "gpt-4o-mini", "HTTP 500"),
+            fail("together", "dead", "HTTP 401"),
+        ];
+        let reports = crate::stats::model_reports(&results, &failures);
+        let rows = comparison_rows(&reports);
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[0], [
+            "groq:llama|70b", "2/2", "0.0%", "100", "400", "500", "100.0", "n/a", "n/a",
+        ].map(String::from));
+        assert_eq!(rows[1], [
+            "openai:gpt-4o-mini", "2/3", "33.3%", "300", "900", "1000", "100.0", "$0.000300", "$0.000600",
+        ].map(String::from));
+        assert_eq!(rows[2], [
+            "together:dead", "0/1", "100.0%", "-", "-", "-", "-", "-", "-",
+        ].map(String::from));
+
+        let md = markdown_table(&reports);
+        let lines: Vec<&str> = md.lines().collect();
+        assert_eq!(lines[0], "| Model | OK | Errors | TTFT p50 (ms) | Total p50 (ms) | Total p95 (ms) | Tok/s | Cost/req | Total cost |");
+        assert_eq!(lines[1], "|:---|---:|---:|---:|---:|---:|---:|---:|---:|");
+        assert!(lines[2].starts_with("| groq:llama\\|70b | 2/2 |"), "{}", lines[2]);
+        // Every table row has the same number of unescaped cell separators.
+        for l in &lines[..5] {
+            assert_eq!(l.replace("\\|", "").matches('|').count(), 10, "{l}");
+        }
+        assert_eq!(lines[5], "");
+        assert!(lines[6].contains("Fastest: groq:llama|70b (TTFT p50 100 ms)"), "{}", lines[6]);
+        // Only one model is priced, so no "Cheapest".
+        assert!(!lines[6].contains("Cheapest"), "{}", lines[6]);
+    }
+
+    #[test]
+    fn test_comparison_verdict_uses_total_without_stream_and_cheapest() {
+        let mut a = make_result("openai", "a", 900, 0.002, 50.0);
+        a.cost_source = Some(crate::types::CostSource::LlmPrices);
+        let mut b = make_result("openai", "b", 300, 0.001, 80.0);
+        b.cost_source = Some(crate::types::CostSource::Config);
+        let reports = crate::stats::model_reports(&[a, b], &[]);
+        let v = comparison_verdict(&reports).unwrap();
+        assert!(v.contains("Fastest: openai:b (total p50 310 ms)"), "{v}");
+        assert!(v.contains("Highest throughput: openai:b (80.0 tok/s)"), "{v}");
+        assert!(v.contains("Cheapest: openai:b ($0.001000 per request)"), "{v}");
+        assert!(comparison_verdict(&reports[..1]).is_none());
+    }
+
+    #[cfg(feature = "cli")]
+    #[test]
+    fn test_print_comparison_does_not_panic() {
+        print_comparison(&[]);
+        let reports = crate::stats::model_reports(&[make_result("openai", "m", 1, 0.0, 1.0)], &[]);
+        print_comparison(&reports);
     }
 
     //  print_table (smoke tests  -  checks no panic)

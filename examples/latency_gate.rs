@@ -6,13 +6,14 @@
 //! OPENAI_API_KEY=sk-... cargo run --example latency_gate -- openai:gpt-4o-mini 1500
 //! ```
 //!
-//! Prefixes: `openai:` (OPENAI_API_KEY), `anthropic:` (ANTHROPIC_API_KEY),
-//! `ollama:` (no key; OLLAMA_HOST or localhost:11434), `openrouter:`
-//! (OPENROUTER_API_KEY), `gemini:` (GEMINI_API_KEY).
+//! Prefixes: `openai:`, `anthropic:`, `openrouter:`, `gemini:`, `groq:`,
+//! `together:`, `fireworks:`, `deepseek:` (key from the matching variable in
+//! `llm_bench::runner::BUILTIN_PROVIDERS`, e.g. GROQ_API_KEY) and `ollama:`
+//! (no key; OLLAMA_HOST or localhost:11434).
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use llm_bench::runner::BenchRunner;
+use llm_bench::runner::{BenchRunner, BUILTIN_PROVIDERS};
 use llm_bench::stats::model_reports;
 use llm_bench::types::{BenchConfig, ProviderConfig};
 
@@ -22,13 +23,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let target = args.next().unwrap_or_else(|| "ollama:qwen2.5:0.5b".into());
     let limit_ms: f64 = args.next().map(|s| s.parse()).transpose()?.unwrap_or(1000.0);
     let (provider, model) = target.split_once(':').ok_or("use provider:model")?;
-    let key_var = match provider {
-        "openai" => "OPENAI_API_KEY",
-        "anthropic" => "ANTHROPIC_API_KEY",
-        "openrouter" => "OPENROUTER_API_KEY",
-        "gemini" => "GEMINI_API_KEY",
-        _ => "",
-    };
+    let key_var = BUILTIN_PROVIDERS
+        .iter()
+        .find(|(name, _)| *name == provider)
+        .map_or("", |(_, var)| *var);
     let base_url = match provider {
         "ollama" => std::env::var("OLLAMA_HOST")
             .map(|h| if h.contains("://") { h } else { format!("http://{h}") })

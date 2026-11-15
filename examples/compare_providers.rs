@@ -1,5 +1,7 @@
 //! Compare every provider you have a key for (plus a local Ollama if it is
-//! running) on the same prompts, and print cost and speed side by side.
+//! running) on the same prompts, and print the comparison table as
+//! Markdown: time to first token, p50/p95 latency, tokens per second, error
+//! rate and cost per request.
 //!
 //! ```text
 //! cargo run --example compare_providers
@@ -10,6 +12,7 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+use llm_bench::report::markdown_table;
 use llm_bench::runner::BenchRunner;
 use llm_bench::stats::model_reports;
 use llm_bench::types::{BenchConfig, ProviderConfig};
@@ -35,6 +38,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         provider("anthropic", "claude-haiku-4-5", Some("ANTHROPIC_API_KEY")),
         provider("gemini", "gemini-2.5-flash", Some("GEMINI_API_KEY")),
         provider("openrouter", "meta-llama/llama-3.3-70b-instruct", Some("OPENROUTER_API_KEY")),
+        provider("groq", "llama-3.3-70b-versatile", Some("GROQ_API_KEY")),
+        provider("together", "meta-llama/Llama-3.3-70B-Instruct-Turbo", Some("TOGETHER_API_KEY")),
+        provider("fireworks", "accounts/fireworks/models/llama-v3p3-70b-instruct", Some("FIREWORKS_API_KEY")),
+        provider("deepseek", "deepseek-v4-flash", Some("DEEPSEEK_API_KEY")),
     ]
     .into_iter()
     .flatten()
@@ -66,16 +73,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         warmup: 0,
     };
     let (results, failures) = BenchRunner::new()?.run_detailed(&config, |_, _| {}).await?;
-    println!("{:<40} {:>10} {:>10} {:>12}", "model", "TTFT p50", "tok/s", "cost/request");
-    for m in model_reports(&results, &failures) {
-        let ttft = m.ttft_ms.map(|s| format!("{:.0} ms", s.p50)).unwrap_or_else(|| "-".into());
-        let tps = m.tokens_per_second.map(|s| format!("{:.1}", s.mean)).unwrap_or_else(|| "-".into());
-        let cost = if m.succeeded > 0 && m.total_cost_usd > 0.0 {
-            format!("${:.6}", m.total_cost_usd / m.succeeded as f64)
-        } else {
-            "n/a".into()
-        };
-        println!("{:<40} {:>10} {:>10} {:>12}", format!("{}:{}", m.provider, m.model), ttft, tps, cost);
-    }
+    // Groq, Together and Fireworks show n/a for cost unless you price them
+    // with `BenchRunner::with_prices` (the `[prices]` of a config file).
+    print!("{}", markdown_table(&model_reports(&results, &failures)));
     Ok(())
 }

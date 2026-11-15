@@ -9,6 +9,7 @@
 //! measured with `std::time::Instant` (monotonic). Nothing here retries;
 //! see `runner.rs`.
 
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 use eventsource_stream::Eventsource;
@@ -20,13 +21,15 @@ use serde_json::{json, Value};
 use tracing::{debug, instrument};
 
 use crate::error::BenchError;
-use crate::types::{BenchResult, ProviderConfig};
+use crate::types::{BenchResult, CostSource, ProviderConfig};
 
-//  Pricing (USD per 1 000 tokens)
+//  Pricing
 
-/// Metadata about a model with a built-in price.
+/// A model with a list price, in the units llm-bench used before 0.4
+/// (USD per 1 000 tokens). Built from the `llm-prices` table.
 pub struct ModelInfo {
-    /// Provider that serves the model.
+    /// Provider that serves the model (`openai`, `anthropic`, `gemini`,
+    /// `deepseek`), as used in `--models`.
     pub provider: &'static str,
     /// Model id as sent to the API.
     pub model: &'static str,
@@ -36,92 +39,129 @@ pub struct ModelInfo {
     pub completion_per_1k: f64,
 }
 
-const fn m(provider: &'static str, model: &'static str, p: f64, c: f64) -> ModelInfo {
-    ModelInfo {
-        provider,
-        model,
-        prompt_per_1k: p,
-        completion_per_1k: c,
-    }
-}
-
-/// Built-in price table (list prices, USD per 1 000 tokens).
-const MODELS: &[ModelInfo] = &[
-    m("openai", "gpt-4o", 0.0025, 0.010),
-    m("openai", "gpt-4o-mini", 0.000150, 0.000600),
-    m("openai", "gpt-4.1", 0.002, 0.008),
-    m("openai", "gpt-4.1-mini", 0.0004, 0.0016),
-    m("openai", "gpt-4.1-nano", 0.0001, 0.0004),
-    m("openai", "gpt-4-turbo", 0.010, 0.030),
-    m("openai", "o3", 0.002, 0.008),
-    m("openai", "o4-mini", 0.0011, 0.0044),
-    m("anthropic", "claude-opus-5-5", 0.004, 0.020),
-    m("anthropic", "claude-sonnet-5-5", 0.002, 0.010),
-    m("anthropic", "claude-opus-5", 0.005, 0.025),
-    m("anthropic", "claude-sonnet-5", 0.002, 0.010),
-    m("anthropic", "claude-opus-4-6", 0.005, 0.025),
-    m("anthropic", "claude-sonnet-4-6", 0.003, 0.015),
-    m("anthropic", "claude-haiku-4-5", 0.001, 0.005),
-];
-
-/// Dated or preview ids priced like another model in the table.
+/// Ids that `llm-prices` does not resolve on its own, mapped to the row
+/// they are billed as.
 const ALIASES: &[(&str, &str)] = &[
-    ("gpt-4-turbo-preview", "gpt-4-turbo"),
-    ("claude-haiku-4-5-20251001", "claude-haiku-4-5"),
+    ("gpt-4-turbo", "gpt-4-turbo-2024-04-09"),
+    ("gpt-4-turbo-preview", "gpt-4-turbo-2024-04-09"),
 ];
 
-fn lookup(model: &str) -> Option<&'static ModelInfo> {
-    let model = ALIASES
+/// Providers whose models are billed at the first-party list price. Models
+/// served by Groq, Together, Fireworks, Ollama or a custom URL are billed
+/// at that host's own price, which only a `[prices]` entry in `--config`
+/// can supply, so they are not looked up here.
+pub const LIST_PRICED_PROVIDERS: &[&str] =
+    &["openai", "anthropic", "gemini", "deepseek", "openrouter"];
+
+/// The list price of `model` from the [`llm_prices`] crate (dated,
+/// source-cited, USD per 1M tokens). Accepts dated ids, provider prefixes
+/// (`openai/gpt-4o-mini`, as OpenRouter names models) and `gpt-4-turbo`.
+/// `None` for unknown models and for rows without both an input and an
+/// output price (embeddings).
+pub fn list_price(model: &str) -> Option<&'static llm_prices::Price> {
+    let id = ALIASES
         .iter()
-        .find(|(alias, _)| *alias == model)
+        .find(|(alias, _)| alias.eq_ignore_ascii_case(model.trim()))
         .map(|(_, target)| *target)
         .unwrap_or(model);
-    MODELS.iter().find(|m| m.model == model)
+    llm_prices::lookup(id).filter(|p| p.input.is_some() && p.output.is_some())
 }
 
-/// USD per 1 000 prompt tokens, or 0.0 for a model not in the table.
-fn prompt_price_per_1k(model: &str) -> f64 {
-    lookup(model).map_or(0.0, |m| m.prompt_per_1k)
-}
-
-/// USD per 1 000 completion tokens, or 0.0 for a model not in the table.
-fn completion_price_per_1k(model: &str) -> f64 {
-    lookup(model).map_or(0.0, |m| m.completion_per_1k)
-}
-
-/// Whether `model` is in the built-in price table.
+/// Whether `model` has a list price (see [`list_price`]).
 pub fn has_known_price(model: &str) -> bool {
-    lookup(model).is_some()
+    list_price(model).is_some()
 }
 
-/// Cost of one request. The provider's own figure wins when the response
-/// carries one (OpenRouter reports `usage.cost`). Otherwise the built-in
-/// table is used, and a model that is not in it costs 0.0, shown as "n/a":
-/// before 0.3.0 unlisted models on the official endpoints were priced at a
-/// made-up flat $0.002 per 1 000 tokens.
+/// Token counts of one response, as priced.
+#[derive(Debug, Clone, Copy, Default)]
+struct TokenUsage {
+    /// Prompt tokens as reported (OpenAI-compatible: cached ones included;
+    /// Anthropic: the uncached part only).
+    prompt: u32,
+    completion: u32,
+    /// Prompt tokens read from the prompt cache.
+    cached: u32,
+    /// Prompt tokens written to the cache (Anthropic).
+    cache_write: u32,
+}
+
+/// Cost of one request and where it came from. The provider's own figure
+/// wins when the response carries one (OpenRouter reports `usage.cost`).
+/// Otherwise providers in [`LIST_PRICED_PROVIDERS`] are billed at the
+/// `llm-prices` list price, with cached prompt tokens at the cache price.
+/// Anything else costs 0.0 with no source, shown as "n/a" (a `[prices]`
+/// entry in `--config` is applied later, by the runner).
 fn request_cost(
     config: &ProviderConfig,
-    prompt_tokens: u32,
-    completion_tokens: u32,
+    usage: TokenUsage,
     reported: Option<f64>,
-) -> f64 {
+) -> (f64, Option<CostSource>) {
     if let Some(c) = reported.filter(|c| c.is_finite() && *c >= 0.0) {
-        return c;
+        return (c, Some(CostSource::Provider));
     }
-    compute_cost(&config.model, prompt_tokens, completion_tokens)
+    if !LIST_PRICED_PROVIDERS.contains(&config.name.as_str()) {
+        return (0.0, None);
+    }
+    let Some(price) = list_price(&config.model) else {
+        return (0.0, None);
+    };
+    // Anthropic reports the uncached input separately; OpenAI-compatible
+    // APIs include cached tokens in prompt_tokens.
+    let uncached = if config.name == "anthropic" {
+        usage.prompt
+    } else {
+        usage.prompt.saturating_sub(usage.cached)
+    };
+    let detailed = llm_prices::Usage {
+        input: u64::from(uncached),
+        output: u64::from(usage.completion),
+        cache_read: u64::from(usage.cached),
+        cache_write_5m: u64::from(usage.cache_write),
+        ..llm_prices::Usage::default()
+    };
+    let cost = price
+        .cost_usage(&detailed)
+        .map(|c| c.total)
+        .or_else(|| price.cost(u64::from(usage.prompt), u64::from(usage.completion)));
+    match cost {
+        Some(c) => (c, Some(CostSource::LlmPrices)),
+        None => (0.0, None),
+    }
 }
 
-/// Compute the USD cost for a request from the built-in price table (0.0 for
-/// models that are not in it).
+/// USD cost of a request at the `llm-prices` list price of `model` (no
+/// cached tokens), or 0.0 for a model without one.
 pub fn compute_cost(model: &str, prompt_tokens: u32, completion_tokens: u32) -> f64 {
-    let p = f64::from(prompt_tokens) * prompt_price_per_1k(model) / 1000.0;
-    let c = f64::from(completion_tokens) * completion_price_per_1k(model) / 1000.0;
-    p + c
+    list_price(model)
+        .and_then(|p| p.cost(u64::from(prompt_tokens), u64::from(completion_tokens)))
+        .unwrap_or(0.0)
 }
 
-/// Every model with a built-in price.
+/// Every listed model with an input and output price in `llm-prices`,
+/// sorted by provider (`anthropic`, `deepseek`, `gemini`, `openai`) and model.
 pub fn supported_models() -> &'static [ModelInfo] {
-    MODELS
+    static MODELS: OnceLock<Vec<ModelInfo>> = OnceLock::new();
+    MODELS.get_or_init(|| {
+        let mut v: Vec<ModelInfo> = llm_prices::all()
+            .iter()
+            .filter(|p| p.status == "listed")
+            .filter_map(|p| {
+                Some(ModelInfo {
+                    provider: if p.provider == "google" { "gemini" } else { p.provider },
+                    model: p.model,
+                    prompt_per_1k: p.input? / 1000.0,
+                    completion_per_1k: p.output? / 1000.0,
+                })
+            })
+            .collect();
+        v.sort_by(|a, b| a.provider.cmp(b.provider).then(a.model.cmp(b.model)));
+        v
+    })
+}
+
+/// Date the bundled `llm-prices` table was generated (ISO 8601).
+pub fn prices_date() -> &'static str {
+    llm_prices::GENERATED
 }
 
 //  Wire types
@@ -157,6 +197,36 @@ struct OpenAiUsage {
     /// USD, reported by OpenRouter.
     #[serde(default)]
     cost: Option<f64>,
+    /// OpenAI (and most compatible servers): cached prompt tokens.
+    #[serde(default)]
+    prompt_tokens_details: Option<PromptTokensDetails>,
+    /// DeepSeek: prompt tokens served from its context cache.
+    #[serde(default)]
+    prompt_cache_hit_tokens: Option<u32>,
+}
+
+#[derive(Deserialize, Debug, Default)]
+struct PromptTokensDetails {
+    #[serde(default)]
+    cached_tokens: Option<u32>,
+}
+
+impl OpenAiUsage {
+    fn tokens(&self) -> TokenUsage {
+        let cached = self
+            .prompt_tokens_details
+            .as_ref()
+            .and_then(|d| d.cached_tokens)
+            .or(self.prompt_cache_hit_tokens)
+            .unwrap_or(0)
+            .min(self.prompt_tokens);
+        TokenUsage {
+            prompt: self.prompt_tokens,
+            completion: self.completion_tokens,
+            cached,
+            cache_write: 0,
+        }
+    }
 }
 
 #[derive(Deserialize, Debug)]
@@ -198,6 +268,21 @@ struct AnthropicUsage {
     input_tokens: u32,
     #[serde(default)]
     output_tokens: u32,
+    #[serde(default)]
+    cache_read_input_tokens: u32,
+    #[serde(default)]
+    cache_creation_input_tokens: u32,
+}
+
+impl AnthropicUsage {
+    fn tokens(&self) -> TokenUsage {
+        TokenUsage {
+            prompt: self.input_tokens,
+            completion: self.output_tokens,
+            cached: self.cache_read_input_tokens,
+            cache_write: self.cache_creation_input_tokens,
+        }
+    }
 }
 
 //  Shared helpers
@@ -269,22 +354,22 @@ fn tokens_per_second(completion_tokens: u32, total_ms: u64) -> f64 {
 /// Measured outcome of one call, before pricing.
 struct Measured {
     text: String,
-    prompt_tokens: u32,
-    completion_tokens: u32,
+    usage: TokenUsage,
     reported_cost: Option<f64>,
     total_ms: u64,
     ttft_ms: Option<u64>,
 }
 
 fn finish(config: &ProviderConfig, prompt: &str, run_idx: u32, m: Measured) -> BenchResult {
-    let cost_usd = request_cost(config, m.prompt_tokens, m.completion_tokens, m.reported_cost);
+    let (cost_usd, cost_source) = request_cost(config, m.usage, m.reported_cost);
+    let (prompt_tokens, completion_tokens) = (m.usage.prompt, m.usage.completion);
     debug!(
         provider = %config.name,
         model = %config.model,
         total_ms = m.total_ms,
         ttft_ms = ?m.ttft_ms,
-        prompt_tokens = m.prompt_tokens,
-        completion_tokens = m.completion_tokens,
+        prompt_tokens,
+        completion_tokens,
         "call complete"
     );
     BenchResult {
@@ -293,20 +378,23 @@ fn finish(config: &ProviderConfig, prompt: &str, run_idx: u32, m: Measured) -> B
         prompt: prompt.to_owned(),
         latency_ms: m.ttft_ms.unwrap_or(m.total_ms),
         total_ms: m.total_ms,
-        prompt_tokens: m.prompt_tokens,
-        completion_tokens: m.completion_tokens,
+        prompt_tokens,
+        completion_tokens,
         cost_usd,
-        tokens_per_second: tokens_per_second(m.completion_tokens, m.total_ms),
+        tokens_per_second: tokens_per_second(completion_tokens, m.total_ms),
         response_text: m.text,
         run_index: run_idx,
         ttft_ms: m.ttft_ms,
         retries: 0,
         tpot_ms: match m.ttft_ms {
-            Some(t) if m.completion_tokens > 1 && m.total_ms >= t => {
-                Some((m.total_ms - t) as f64 / f64::from(m.completion_tokens - 1))
+            Some(t) if completion_tokens > 1 && m.total_ms >= t => {
+                Some((m.total_ms - t) as f64 / f64::from(completion_tokens - 1))
             }
             _ => None,
         },
+        cached_prompt_tokens: m.usage.cached,
+        cache_write_prompt_tokens: m.usage.cache_write,
+        cost_source,
     }
 }
 
@@ -407,8 +495,7 @@ pub async fn run_openai(
         }
         Measured {
             text,
-            prompt_tokens: usage.prompt_tokens,
-            completion_tokens: usage.completion_tokens,
+            usage: usage.tokens(),
             reported_cost: usage.cost,
             total_ms: start.elapsed().as_millis() as u64,
             ttft_ms: ttft,
@@ -424,8 +511,7 @@ pub async fn run_openai(
                 .next()
                 .and_then(|c| c.message.content)
                 .unwrap_or_default(),
-            prompt_tokens: usage.prompt_tokens,
-            completion_tokens: usage.completion_tokens,
+            usage: usage.tokens(),
             reported_cost: usage.cost,
             total_ms,
             ttft_ms: None,
@@ -491,6 +577,8 @@ pub async fn run_anthropic(
                         let u: AnthropicUsage = serde_json::from_value(u.clone())?;
                         usage.input_tokens = u.input_tokens;
                         usage.output_tokens = usage.output_tokens.max(u.output_tokens);
+                        usage.cache_read_input_tokens = u.cache_read_input_tokens;
+                        usage.cache_creation_input_tokens = u.cache_creation_input_tokens;
                     }
                 }
                 "content_block_delta" => {
@@ -519,8 +607,7 @@ pub async fn run_anthropic(
         }
         Measured {
             text,
-            prompt_tokens: usage.input_tokens,
-            completion_tokens: usage.output_tokens,
+            usage: usage.tokens(),
             reported_cost: None,
             total_ms: start.elapsed().as_millis() as u64,
             ttft_ms: ttft,
@@ -537,8 +624,7 @@ pub async fn run_anthropic(
                 .filter_map(|b| b.text)
                 .collect::<Vec<_>>()
                 .join(""),
-            prompt_tokens: usage.input_tokens,
-            completion_tokens: usage.output_tokens,
+            usage: usage.tokens(),
             reported_cost: None,
             total_ms,
             ttft_ms: None,
@@ -623,36 +709,35 @@ mod tests {
         );
     }
 
-    //  Price tables
+    //  List prices (llm-prices)
 
-    #[test]
-    fn test_prompt_price_per_1k_gpt4_turbo() {
-        assert!((prompt_price_per_1k("gpt-4-turbo") - 0.010).abs() < 1e-9);
+    fn per_1m(model: &str) -> (f64, f64) {
+        let p = list_price(model).unwrap_or_else(|| panic!("{model} has no list price"));
+        (p.input.unwrap_or(0.0), p.output.unwrap_or(0.0))
     }
 
     #[test]
-    fn test_completion_price_per_1k_gpt4_turbo() {
-        assert!((completion_price_per_1k("gpt-4-turbo") - 0.030).abs() < 1e-9);
+    fn test_list_price_gpt4_turbo_alias() {
+        assert_eq!(per_1m("gpt-4-turbo"), (10.0, 30.0));
+        assert_eq!(per_1m("gpt-4-turbo-preview"), (10.0, 30.0));
     }
 
     #[test]
-    fn test_prompt_price_claude_sonnet() {
-        assert!((prompt_price_per_1k("claude-sonnet-5") - 0.002).abs() < 1e-9);
+    fn test_list_price_claude_sonnet() {
+        assert_eq!(per_1m("claude-sonnet-5"), (2.0, 10.0));
     }
 
     #[test]
-    fn test_completion_price_claude_sonnet() {
-        assert!((completion_price_per_1k("claude-sonnet-5") - 0.010).abs() < 1e-9);
+    fn test_list_price_dated_alias_equals_latest() {
+        assert_eq!(per_1m("claude-haiku-4-5-20251001"), per_1m("claude-haiku-4-5"));
     }
 
     #[test]
-    fn test_prompt_price_latest_alias_equals_dated() {
-        let dated = prompt_price_per_1k("claude-haiku-4-5-20251001");
-        let latest = prompt_price_per_1k("claude-haiku-4-5");
-        assert!(
-            (dated - latest).abs() < 1e-9,
-            "aliases should have same price"
-        );
+    fn test_list_price_openrouter_style_ids_and_deepseek() {
+        assert_eq!(per_1m("openai/gpt-4o-mini"), per_1m("gpt-4o-mini"));
+        assert!(has_known_price("deepseek-v4-flash"));
+        // Embeddings have no output price, so no request cost.
+        assert!(!has_known_price("text-embedding-3-small"));
     }
 
     //  supported_models
@@ -663,18 +748,10 @@ mod tests {
     }
 
     #[test]
-    fn test_supported_models_all_have_positive_prices() {
+    fn test_supported_models_all_have_non_negative_prices() {
         for m in supported_models() {
-            assert!(
-                m.prompt_per_1k > 0.0,
-                "model {} has zero prompt price",
-                m.model
-            );
-            assert!(
-                m.completion_per_1k > 0.0,
-                "model {} has zero completion price",
-                m.model
-            );
+            assert!(m.prompt_per_1k >= 0.0, "model {}", m.model);
+            assert!(m.completion_per_1k > 0.0, "model {}", m.model);
         }
     }
 
@@ -682,11 +759,14 @@ mod tests {
     fn test_supported_models_providers_are_known() {
         for m in supported_models() {
             assert!(
-                m.provider == "openai" || m.provider == "anthropic",
+                ["openai", "anthropic", "gemini", "deepseek"].contains(&m.provider),
                 "unknown provider: {}",
                 m.provider
             );
         }
+        assert!(supported_models().iter().any(|m| m.provider == "gemini"));
+        assert!(supported_models().iter().any(|m| m.provider == "deepseek"));
+        assert_eq!(prices_date().len(), 10);
     }
 
     #[test]
@@ -710,20 +790,94 @@ mod tests {
         assert!(!has_known_price("qwen2.5:1.5b"));
     }
 
+    fn tokens(prompt: u32, completion: u32) -> TokenUsage {
+        TokenUsage {
+            prompt,
+            completion,
+            ..TokenUsage::default()
+        }
+    }
+
     #[test]
     fn test_request_cost_unpriced_model_is_zero_and_reported_cost_wins() {
         let mut c = openai_config("", "qwen2.5:1.5b");
         c.base_url = "http://localhost:11434".into();
-        assert_eq!(request_cost(&c, 100, 100, None), 0.0);
+        assert_eq!(request_cost(&c, tokens(100, 100), None), (0.0, None));
         c.base_url = String::new();
-        assert_eq!(request_cost(&c, 100, 100, None), 0.0);
+        assert_eq!(request_cost(&c, tokens(100, 100), None), (0.0, None));
         // A priced model through a proxy is still priced.
         let mut p = openai_config("", "gpt-4o-mini");
         p.base_url = "http://proxy:8080".into();
-        assert!(request_cost(&p, 1000, 1000, None) > 0.0);
+        let (cost, source) = request_cost(&p, tokens(1000, 1000), None);
+        assert!((cost - 0.00075).abs() < 1e-12, "{cost}");
+        assert_eq!(source, Some(CostSource::LlmPrices));
         // A cost reported by the provider (OpenRouter) beats the table.
-        assert_eq!(request_cost(&p, 1000, 1000, Some(0.0123)), 0.0123);
-        assert!(request_cost(&p, 1000, 1000, Some(f64::NAN)) > 0.0);
+        assert_eq!(
+            request_cost(&p, tokens(1000, 1000), Some(0.0123)),
+            (0.0123, Some(CostSource::Provider))
+        );
+        assert!(request_cost(&p, tokens(1000, 1000), Some(f64::NAN)).0 > 0.0);
+    }
+
+    #[test]
+    fn test_request_cost_hosts_without_list_prices_are_unpriced() {
+        // gpt-4o-mini served by Groq or a custom provider is not billed at
+        // OpenAI's price; a [prices] entry has to say what it costs.
+        for name in ["groq", "together", "fireworks", "ollama", "my-vllm"] {
+            let mut c = openai_config("", "gpt-4o-mini");
+            c.name = name.into();
+            assert_eq!(request_cost(&c, tokens(1000, 1000), None), (0.0, None), "{name}");
+        }
+        let mut d = openai_config("", "deepseek-v4-flash");
+        d.name = "deepseek".into();
+        assert!(request_cost(&d, tokens(1000, 1000), None).0 > 0.0);
+    }
+
+    #[test]
+    fn test_request_cost_bills_cached_prompt_tokens_at_cache_price() {
+        // gpt-4o-mini: $0.15 input, $0.075 cached input, $0.60 output per 1M.
+        let c = openai_config("", "gpt-4o-mini");
+        let usage = TokenUsage {
+            prompt: 2_000_000,
+            completion: 0,
+            cached: 1_000_000,
+            cache_write: 0,
+        };
+        let (cost, _) = request_cost(&c, usage, None);
+        assert!((cost - (0.15 + 0.075)).abs() < 1e-9, "{cost}");
+        // Anthropic reports the uncached input on its own: claude-haiku-4-5
+        // at $1 input, $0.10 cache read, $1.25 5-minute cache write per 1M.
+        let a = anthropic_config("", "claude-haiku-4-5");
+        let usage = TokenUsage {
+            prompt: 1_000_000,
+            completion: 0,
+            cached: 1_000_000,
+            cache_write: 1_000_000,
+        };
+        let (cost, _) = request_cost(&a, usage, None);
+        assert!((cost - (1.0 + 0.10 + 1.25)).abs() < 1e-9, "{cost}");
+    }
+
+    #[tokio::test]
+    async fn test_run_openai_reads_cached_tokens() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "choices": [{"message": {"content": "ok"}}],
+                "usage": {"prompt_tokens": 2000, "completion_tokens": 10,
+                          "prompt_tokens_details": {"cached_tokens": 1536}}
+            })))
+            .mount(&server)
+            .await;
+        let config = openai_config("k", "gpt-4o-mini");
+        let r = run_openai(&Client::new(), &config, &server.uri(), "hi", 0, false)
+            .await
+            .unwrap();
+        assert_eq!((r.prompt_tokens, r.cached_prompt_tokens), (2000, 1536));
+        let expected = (464.0 * 0.15 + 1536.0 * 0.075 + 10.0 * 0.6) / 1e6;
+        assert!((r.cost_usd - expected).abs() < 1e-12, "{}", r.cost_usd);
+        assert_eq!(r.cost_source, Some(CostSource::LlmPrices));
     }
 
     #[test]

@@ -65,6 +65,37 @@ pub struct BenchResult {
     /// with at least two completion tokens only.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tpot_ms: Option<f64>,
+
+    /// Prompt tokens served from the provider's prompt cache (OpenAI
+    /// `prompt_tokens_details.cached_tokens`, DeepSeek
+    /// `prompt_cache_hit_tokens`, Anthropic `cache_read_input_tokens`).
+    /// Included in `prompt_tokens` for OpenAI-compatible APIs. Absent from
+    /// the JSON when zero.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub cached_prompt_tokens: u32,
+
+    /// Prompt tokens written to the provider's prompt cache (Anthropic
+    /// `cache_creation_input_tokens`; not part of `prompt_tokens`). Absent
+    /// from the JSON when zero.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub cache_write_prompt_tokens: u32,
+
+    /// Where `cost_usd` came from. Absent when the model has no known price
+    /// (`cost_usd` is then 0 and the table shows `n/a`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cost_source: Option<CostSource>,
+}
+
+/// Where a request's cost came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum CostSource {
+    /// The provider reported the cost in the response (OpenRouter).
+    Provider,
+    /// A `[prices]` entry in the `--config` file.
+    Config,
+    /// List prices from the `llm-prices` crate.
+    LlmPrices,
 }
 
 fn is_zero(n: &u32) -> bool {
@@ -114,9 +145,11 @@ pub struct BenchConfig {
 /// Configuration for a single provider+model combination.
 #[derive(Debug, Clone)]
 pub struct ProviderConfig {
-    /// Provider: `"openai"`, `"anthropic"`, `"ollama"`, `"openrouter"` or
-    /// `"gemini"`. Everything except `"anthropic"` speaks the OpenAI Chat
-    /// Completions format.
+    /// Provider: a built-in one (`"openai"`, `"anthropic"`, `"ollama"`,
+    /// `"openrouter"`, `"gemini"`, `"groq"`, `"together"`, `"fireworks"`,
+    /// `"deepseek"`) or a name from the `--config` file. Everything except
+    /// `"anthropic"` speaks the OpenAI Chat Completions format. A name that
+    /// is not built in needs a `base_url`.
     pub name: String,
 
     /// Model identifier string sent verbatim to the API.
@@ -190,6 +223,9 @@ mod tests {
             ttft_ms: None,
             retries: 0,
             tpot_ms: None,
+            cached_prompt_tokens: 0,
+            cache_write_prompt_tokens: 0,
+            cost_source: None,
         }
     }
 

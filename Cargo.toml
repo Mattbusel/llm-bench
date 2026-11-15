@@ -2,9 +2,9 @@
 
 [package]
 name = "llm-bench"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2021"
-description = "Send the same prompts to OpenAI, Anthropic, Ollama, OpenRouter, Gemini or any OpenAI-compatible server and compare time to first token, latency percentiles, tokens per second and cost; CLI and library"
+description = "Compare LLM providers on your own prompts: OpenAI, Anthropic, OpenRouter, Groq, Together, Fireworks, DeepSeek, Gemini, Ollama or any OpenAI-compatible URL; time to first token, p50/p95 latency, tokens per second, error rate and cost, as a table, Markdown or JSON"
 rust-version = "1.87"
 license = "MIT"
 repository = "https://gitlab.com/mattbusel/llm-bench"
@@ -70,6 +70,10 @@ backon = { version = "1.5", default-features = false, features = ["std", "tokio-
 httpdate = "1"
 # --output csv
 csv = "1"
+# Dated, source-cited list prices for cost per request.
+llm-prices = "1.1.1"
+# --config: custom OpenAI-compatible providers and prices.
+toml = { version = "0.9", default-features = false, features = ["parse", "serde"] }
 
 # cli
 clap = { version = "4.5", features = ["derive", "env"], optional = true }

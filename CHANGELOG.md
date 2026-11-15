@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.4.0] - 2026-11-14
+
+### Added
+
+- **Providers:** `groq:` (`GROQ_API_KEY`), `together:` (`TOGETHER_API_KEY`), `fireworks:` (`FIREWORKS_API_KEY`) and `deepseek:` (`DEEPSEEK_API_KEY`), each with a `--<name>-key` flag. Bare `deepseek-*` names are recognised.
+- **`--config FILE`** (or `LLM_BENCH_CONFIG`), a TOML file: `[providers.NAME] base_url = ...` adds any OpenAI-compatible server as `--models NAME:<model>` (vLLM, LM Studio, a gateway), with `api_key_env` or `api_key`; the same table points a built-in provider at another URL; `[prices."provider:model"]` or `[prices."model"]` sets `input` / `output` in USD per 1M tokens, and optionally `cached_input` for prompt tokens served from the provider's cache (otherwise billed at `input`). A provider name from the file is matched before the bare-name rules, so `[providers.deepseek-local]` or `[providers.gpt-proxy]` is used as `--models deepseek-local:<model>` instead of being sent to DeepSeek or OpenAI. When `api_key_env` names a variable that is not set (and no flag or built-in variable supplies a key), the run stops with an error naming the variable instead of sending every request without a key. Unknown keys, bad provider names and negative prices are rejected with the file name, and a dotted bare key such as `[prices.gpt-4.1]` gets a hint to quote it. See `examples/llm-bench.toml`.
+- **Comparison table:** one row per model with successful/attempted requests, **error rate**, **time to first token p50** (with `--stream`), **total latency p50 and p95**, median **tokens per second**, **cost per request** and total cost, and a "Fastest / Highest throughput / Cheapest" line under it.
+- **`--output markdown`** (alias `md`) prints that table as GitHub Markdown; **`--markdown-file PATH`** writes it alongside any other output. `--output json` is unchanged (one record per request).
+- **`--repeat N`**, an alias of `--runs`. `--concurrency C` caps requests in flight across all models; an end-to-end test now checks that a mock server never sees more than C at once.
+- `--summary-file` reports gain `error_rate` and `cost_per_request_usd` (the mean over requests that have a price; unpriced requests are left out rather than counted as $0); per-request JSON gains `cost_source` (`provider`, `config` or `llm-prices`), `cached_prompt_tokens` and `cache_write_prompt_tokens` (Anthropic cache writes), each omitted when empty.
+- Library: `llm_bench::config` (`FileConfig` with `missing_key_env`, `PriceTable`, `ModelPrice` with `new` and `cost_cached`), `BenchRunner::with_prices`, `runner::BUILTIN_PROVIDERS`, `report::{comparison_rows, markdown_table, comparison_verdict, print_comparison}`, `providers::{list_price, prices_date, LIST_PRICED_PROVIDERS}`.
+- `tests/cli_mock_server.rs` runs the built binary against a local OpenAI-compatible mock (streaming and non-streaming, one model that always returns HTTP 500): Markdown and JSON output, `--markdown-file`, `--summary-file`, a config-defined provider and `groq:` redirected by the config file (checks the URL path and the `GROQ_API_KEY` bearer token), configured prices, the error rate, `--concurrency 1` and `3`, exit status 1 when every request fails, config providers named `deepseek-local` and `gpt-proxy` reaching their own URLs with vendor keys set, and the unset-`api_key_env` error.
+
+### Changed
+
+- **Prices come from the [llm-prices](https://crates.io/crates/llm-prices) crate** (dated, source-cited list prices for OpenAI, Anthropic, Gemini and DeepSeek; table checked 2026-10-23) instead of a hand-kept table of 15 models. `llm-bench models` lists every listed model in USD per 1M tokens with the table date.
+- Cached prompt tokens are billed at the cache price: OpenAI `prompt_tokens_details.cached_tokens`, DeepSeek `prompt_cache_hit_tokens`, Anthropic `cache_read_input_tokens` and `cache_creation_input_tokens`. Repeated long prompts on OpenAI were overcharged before.
+- List prices apply only to models served by their own vendor (openai, anthropic, gemini, deepseek) or by OpenRouter. The same model id on Groq, Together, Fireworks, Ollama or a custom URL shows `n/a` unless a `[prices]` entry says what that host charges, instead of being billed at the vendor's price. Cost precedence: the provider's reported cost (OpenRouter), then `[prices]`, then llm-prices. A `[prices]` entry bills cached prompt tokens at `cached_input` (or `input`) and counts them once: OpenAI-compatible hosts include them in `prompt_tokens`, Anthropic reports cache reads and writes on top of it. Anthropic cache writes are billed at `input` under a `[prices]` entry (Anthropic charges 1.25x for them); without one, the llm-prices list price bills them exactly.
+- The terminal table replaces the 0.3 columns (P50, P99, Tok/s, Avg Cost, Total Cost, Success). `report::print_table`, `generate_summary` and `BenchSummary` remain for library users.
+- `providers::ModelInfo` rows are built from llm-prices; `gpt-4-turbo` and `gpt-4-turbo-preview` map to `gpt-4-turbo-2024-04-09`.
+- `RunArgs` and `OutputFormat` derive `Default`; `cli::build_plan` returns the `BenchConfig` and the config file's prices (`build_config` still returns only the former).
+
+### Not yet verified
+
+- The new hosted providers (Groq, Together, Fireworks, DeepSeek) were tested only against the local mock server, not their real endpoints. Streamed requests ask for usage with `stream_options.include_usage`; a host that leaves usage out of streamed chunks reports 0 completion tokens, so its tok/s is left out and its cost is understated. Run without `--stream` if a host's numbers look wrong.
+
 ## [0.3.0] - 2026-10-04
 
 ### Added

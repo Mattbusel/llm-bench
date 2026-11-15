@@ -20,9 +20,10 @@ use reqwest::Client;
 use tokio::sync::Semaphore;
 use tracing::{debug, instrument};
 
+use crate::config::PriceTable;
 use crate::error::BenchError;
 use crate::providers::{run_anthropic, run_openai};
-use crate::types::{BenchConfig, BenchFailure, BenchResult, ProviderConfig};
+use crate::types::{BenchConfig, BenchFailure, BenchResult, CostSource, ProviderConfig};
 
 /// Official OpenAI API base URL (used when no `--openai-base-url` is given).
 pub const DEFAULT_OPENAI_BASE_URL: &str = "https://api.openai.com";
@@ -35,6 +36,28 @@ pub const DEFAULT_OPENROUTER_BASE_URL: &str = "https://openrouter.ai/api/v1";
 /// Google Gemini's OpenAI-compatible API.
 pub const DEFAULT_GEMINI_BASE_URL: &str =
     "https://generativelanguage.googleapis.com/v1beta/openai";
+/// Groq's OpenAI-compatible API.
+pub const DEFAULT_GROQ_BASE_URL: &str = "https://api.groq.com/openai/v1";
+/// Together AI's OpenAI-compatible API.
+pub const DEFAULT_TOGETHER_BASE_URL: &str = "https://api.together.xyz/v1";
+/// Fireworks AI's OpenAI-compatible API.
+pub const DEFAULT_FIREWORKS_BASE_URL: &str = "https://api.fireworks.ai/inference/v1";
+/// DeepSeek's OpenAI-compatible API.
+pub const DEFAULT_DEEPSEEK_BASE_URL: &str = "https://api.deepseek.com/v1";
+
+/// Built-in providers and the environment variable that holds each one's
+/// API key (empty for Ollama, which needs none).
+pub const BUILTIN_PROVIDERS: &[(&str, &str)] = &[
+    ("openai", "OPENAI_API_KEY"),
+    ("anthropic", "ANTHROPIC_API_KEY"),
+    ("openrouter", "OPENROUTER_API_KEY"),
+    ("gemini", "GEMINI_API_KEY"),
+    ("groq", "GROQ_API_KEY"),
+    ("together", "TOGETHER_API_KEY"),
+    ("fireworks", "FIREWORKS_API_KEY"),
+    ("deepseek", "DEEPSEEK_API_KEY"),
+    ("ollama", ""),
+];
 
 /// Longest wait honoured from a `Retry-After` header.
 const MAX_RETRY_AFTER: Duration = Duration::from_secs(60);
@@ -44,6 +67,7 @@ const MAX_RETRY_AFTER: Duration = Duration::from_secs(60);
 /// Drives a full benchmark run and returns all individual results.
 pub struct BenchRunner {
     client: Client,
+    prices: Arc<PriceTable>,
 }
 
 impl BenchRunner {
@@ -56,7 +80,18 @@ impl BenchRunner {
             .timeout(Duration::from_secs(120))
             .build()
             .map_err(BenchError::Http)?;
-        Ok(Self { client })
+        Ok(Self {
+            client,
+            prices: Arc::new(PriceTable::default()),
+        })
+    }
+
+    /// Price requests with `prices` (the `[prices]` section of a config
+    /// file). An entry wins over the `llm-prices` list price; a cost the
+    /// provider reports itself (OpenRouter) still wins over both.
+    pub fn with_prices(mut self, prices: PriceTable) -> Self {
+        self.prices = Arc::new(prices);
+        self
     }
 
     /// Run the full benchmark suite described by `config`.
@@ -111,15 +146,19 @@ impl BenchRunner {
                 let cb = Arc::clone(&on_progress);
                 let done = Arc::clone(&completed);
                 let client = self.client.clone();
+                let prices = Arc::clone(&self.prices);
 
                 tokio::spawn(async move {
                     let _permit = sem.acquire().await.map_err(|e| BenchError::Concurrency {
                         reason: e.to_string(),
                     })?;
 
-                    let result =
+                    let mut result =
                         call_with_retries(&client, &provider, &prompt, run_idx, stream, retries)
                             .await;
+                    if let Ok(r) = result.as_mut() {
+                        apply_configured_price(r, &prices);
+                    }
 
                     let n = done.fetch_add(1, Ordering::Relaxed) + 1;
                     cb(n, total);
@@ -154,6 +193,29 @@ impl BenchRunner {
         }
 
         Ok((results, failures))
+    }
+}
+
+/// Re-price `r` from a `[prices]` entry, unless the provider reported the
+/// cost itself.
+///
+/// Cached prompt tokens are billed at the entry's `cached_input` price (or
+/// `input` when it has none). OpenAI-compatible APIs count cached tokens
+/// inside `prompt_tokens`, so only the rest is billed at `input`; Anthropic
+/// reports them, and cache writes, apart from `prompt_tokens`, so those are
+/// added (cache writes at `input`, see [`crate::config::ModelPrice`]).
+pub fn apply_configured_price(r: &mut BenchResult, prices: &PriceTable) {
+    if r.cost_source == Some(CostSource::Provider) {
+        return;
+    }
+    if let Some(p) = prices.get(&r.provider, &r.model) {
+        let uncached = if r.provider == "anthropic" {
+            r.prompt_tokens.saturating_add(r.cache_write_prompt_tokens)
+        } else {
+            r.prompt_tokens.saturating_sub(r.cached_prompt_tokens)
+        };
+        r.cost_usd = p.cost_cached(uncached, r.cached_prompt_tokens, r.completion_tokens);
+        r.cost_source = Some(CostSource::Config);
     }
 }
 
@@ -220,11 +282,17 @@ pub fn default_base_url(provider: &str) -> Option<&'static str> {
         "ollama" => DEFAULT_OLLAMA_BASE_URL,
         "openrouter" => DEFAULT_OPENROUTER_BASE_URL,
         "gemini" => DEFAULT_GEMINI_BASE_URL,
+        "groq" => DEFAULT_GROQ_BASE_URL,
+        "together" => DEFAULT_TOGETHER_BASE_URL,
+        "fireworks" => DEFAULT_FIREWORKS_BASE_URL,
+        "deepseek" => DEFAULT_DEEPSEEK_BASE_URL,
         _ => return None,
     })
 }
 
-/// Send one request to the right API for `provider.name`.
+/// Send one request to the right API for `provider.name`: the Anthropic
+/// Messages API for `anthropic`, OpenAI Chat Completions for everything
+/// else. A provider that is not built in must carry a `base_url`.
 async fn dispatch_call(
     client: &Client,
     provider: &ProviderConfig,
@@ -232,18 +300,21 @@ async fn dispatch_call(
     run_idx: u32,
     stream: bool,
 ) -> Result<BenchResult, BenchError> {
-    let Some(default) = default_base_url(&provider.name) else {
+    let url = if !provider.base_url.is_empty() {
+        provider.base_url.clone()
+    } else if let Some(default) = default_base_url(&provider.name) {
+        default.to_owned()
+    } else {
+        let names: Vec<&str> = BUILTIN_PROVIDERS.iter().map(|(n, _)| *n).collect();
         return Err(BenchError::InvalidConfig {
             reason: format!(
-                "unknown provider '{}'; supported: openai, anthropic, ollama, openrouter, gemini",
+                "unknown provider '{}' with no base URL; built in: {}. \
+                 Define others in a --config file ([providers.{}] base_url = \"...\")",
+                provider.name,
+                names.join(", "),
                 provider.name
             ),
         });
-    };
-    let url = if provider.base_url.is_empty() {
-        default.to_owned()
-    } else {
-        provider.base_url.clone()
     };
     if provider.name == "anthropic" {
         run_anthropic(client, provider, &url, prompt, run_idx, stream).await
@@ -684,5 +755,147 @@ mod tests {
         assert_eq!(default_base_url("ollama"), Some(DEFAULT_OLLAMA_BASE_URL));
         assert_eq!(default_base_url("gemini"), Some(DEFAULT_GEMINI_BASE_URL));
         assert_eq!(default_base_url("nope"), None);
+        for (name, _) in BUILTIN_PROVIDERS {
+            assert!(default_base_url(name).is_some(), "{name}");
+        }
+        // Each hosted OpenAI-compatible base ends in its version segment.
+        use crate::providers::chat_completions_url;
+        assert_eq!(
+            chat_completions_url(DEFAULT_GROQ_BASE_URL),
+            "https://api.groq.com/openai/v1/chat/completions"
+        );
+        assert_eq!(
+            chat_completions_url(DEFAULT_TOGETHER_BASE_URL),
+            "https://api.together.xyz/v1/chat/completions"
+        );
+        assert_eq!(
+            chat_completions_url(DEFAULT_FIREWORKS_BASE_URL),
+            "https://api.fireworks.ai/inference/v1/chat/completions"
+        );
+        assert_eq!(
+            chat_completions_url(DEFAULT_DEEPSEEK_BASE_URL),
+            "https://api.deepseek.com/v1/chat/completions"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_custom_provider_and_configured_price() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/chat/completions"))
+            .and(wiremock::matchers::header("authorization", "Bearer vk"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "choices": [{"message": {"role": "assistant", "content": "ok"}}],
+                "usage": {"prompt_tokens": 1000, "completion_tokens": 500}
+            })))
+            .expect(2)
+            .mount(&server)
+            .await;
+        let provider = ProviderConfig {
+            name: "my-vllm".into(),
+            model: "llama".into(),
+            api_key: "vk".into(),
+            base_url: format!("{}/v1", server.uri()),
+            max_tokens: 8,
+        };
+        let mut table = std::collections::BTreeMap::new();
+        table.insert(
+            "my-vllm:llama".to_owned(),
+            crate::config::ModelPrice::new(2.0, 4.0),
+        );
+        let mut config = one_request(provider, 0);
+        config.runs_per_prompt = 2;
+        let (results, failures) = BenchRunner::new()
+            .unwrap()
+            .with_prices(PriceTable::new(table))
+            .run_detailed(&config, |_, _| {})
+            .await
+            .unwrap();
+        assert!(failures.is_empty(), "{failures:?}");
+        assert_eq!(results.len(), 2);
+        for r in &results {
+            assert_eq!(r.provider, "my-vllm");
+            assert!((r.cost_usd - (1000.0 * 2.0 + 500.0 * 4.0) / 1e6).abs() < 1e-12);
+            assert_eq!(r.cost_source, Some(CostSource::Config));
+        }
+    }
+
+    #[test]
+    fn test_configured_price_never_overrides_reported_cost() {
+        let mut r = BenchResult {
+            provider: "openrouter".into(),
+            model: "m".into(),
+            prompt: String::new(),
+            latency_ms: 1,
+            total_ms: 1,
+            prompt_tokens: 10,
+            completion_tokens: 10,
+            cost_usd: 0.5,
+            tokens_per_second: 0.0,
+            response_text: String::new(),
+            run_index: 0,
+            ttft_ms: None,
+            retries: 0,
+            tpot_ms: None,
+            cached_prompt_tokens: 0,
+            cache_write_prompt_tokens: 0,
+            cost_source: Some(CostSource::Provider),
+        };
+        let mut table = std::collections::BTreeMap::new();
+        table.insert("m".to_owned(), crate::config::ModelPrice::new(1.0, 1.0));
+        let prices = PriceTable::new(table);
+        apply_configured_price(&mut r, &prices);
+        assert_eq!(r.cost_usd, 0.5);
+        r.cost_source = None;
+        apply_configured_price(&mut r, &prices);
+        assert!((r.cost_usd - 20.0 / 1e6).abs() < 1e-15);
+        assert_eq!(r.cost_source, Some(CostSource::Config));
+    }
+
+    #[test]
+    fn test_configured_price_bills_cached_prompt_tokens() {
+        let mut table = std::collections::BTreeMap::new();
+        table.insert(
+            "m".to_owned(),
+            crate::config::ModelPrice {
+                cached_input: Some(0.5),
+                ..crate::config::ModelPrice::new(2.0, 4.0)
+            },
+        );
+        table.insert("flat".to_owned(), crate::config::ModelPrice::new(2.0, 4.0));
+        let prices = PriceTable::new(table);
+        let base = |provider: &str, model: &str| BenchResult {
+            provider: provider.into(),
+            model: model.into(),
+            prompt: String::new(),
+            latency_ms: 1,
+            total_ms: 1,
+            prompt_tokens: 1_000_000,
+            completion_tokens: 1_000_000,
+            cost_usd: 0.0,
+            tokens_per_second: 0.0,
+            response_text: String::new(),
+            run_index: 0,
+            ttft_ms: None,
+            retries: 0,
+            tpot_ms: None,
+            cached_prompt_tokens: 400_000,
+            cache_write_prompt_tokens: 0,
+            cost_source: None,
+        };
+        // OpenAI-compatible: 600k uncached at $2, 400k cached at $0.50, 1M out at $4.
+        let mut r = base("groq", "m");
+        apply_configured_price(&mut r, &prices);
+        assert!((r.cost_usd - (1.2 + 0.2 + 4.0)).abs() < 1e-9, "{}", r.cost_usd);
+        // No cached_input: every prompt token at $2, never more than prompt_tokens.
+        let mut r = base("groq", "flat");
+        apply_configured_price(&mut r, &prices);
+        assert!((r.cost_usd - (2.0 + 4.0)).abs() < 1e-9, "{}", r.cost_usd);
+        // Anthropic: prompt_tokens is the uncached part; cache reads and
+        // writes come on top (writes at the input price).
+        let mut r = base("anthropic", "m");
+        r.cache_write_prompt_tokens = 100_000;
+        apply_configured_price(&mut r, &prices);
+        assert!((r.cost_usd - (2.2 + 0.2 + 4.0)).abs() < 1e-9, "{}", r.cost_usd);
     }
 }

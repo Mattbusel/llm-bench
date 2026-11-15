@@ -93,6 +93,15 @@ pub struct ModelReport {
     pub total_cost_usd: f64,
     /// Retries spent on the successful requests.
     pub retries: u32,
+    /// Failed requests over all requests (0.0 - 1.0).
+    #[serde(default)]
+    pub error_rate: f64,
+    /// Mean cost in USD of the successful requests that have a price (a
+    /// `cost_source`); requests without one are left out rather than
+    /// counted as $0. `None` when no request has a price (no list price, no
+    /// provider-reported cost, no `[prices]` entry).
+    #[serde(default)]
+    pub cost_per_request_usd: Option<f64>,
 }
 
 /// One [`ModelReport`] per provider and model, sorted by provider then model.
@@ -114,6 +123,19 @@ pub fn model_reports(results: &[BenchResult], failures: &[BenchFailure]) -> Vec<
     groups
         .into_iter()
         .map(|((provider, model), (rs, failed))| ModelReport {
+            error_rate: if rs.len() + failed > 0 {
+                failed as f64 / (rs.len() + failed) as f64
+            } else {
+                0.0
+            },
+            cost_per_request_usd: {
+                let priced: Vec<f64> = rs
+                    .iter()
+                    .filter(|r| r.cost_source.is_some())
+                    .map(|r| r.cost_usd)
+                    .collect();
+                (!priced.is_empty()).then(|| priced.iter().sum::<f64>() / priced.len() as f64)
+            },
             provider,
             model,
             succeeded: rs.len(),
@@ -149,6 +171,45 @@ mod tests {
         assert_eq!((one.p50, one.p99, one.stddev), (7.0, 7.0, 0.0));
         assert!(Stats::of([]).is_none());
         assert!(Stats::of([f64::NAN]).is_none());
+    }
+
+    #[test]
+    fn error_rate_and_cost_per_request() {
+        use crate::types::CostSource;
+        let ok = |cost: f64, source: Option<CostSource>| BenchResult {
+            provider: "p".into(),
+            model: "m".into(),
+            prompt: String::new(),
+            latency_ms: 10,
+            total_ms: 10,
+            prompt_tokens: 1,
+            completion_tokens: 1,
+            cost_usd: cost,
+            tokens_per_second: 100.0,
+            response_text: String::new(),
+            run_index: 0,
+            ttft_ms: None,
+            retries: 0,
+            tpot_ms: None,
+            cached_prompt_tokens: 0,
+            cache_write_prompt_tokens: 0,
+            cost_source: source,
+        };
+        let fail = BenchFailure {
+            provider: "p".into(),
+            model: "m".into(),
+            error: "HTTP 500".into(),
+        };
+        let priced = [ok(0.002, Some(CostSource::LlmPrices)), ok(0.004, Some(CostSource::LlmPrices)), ok(0.0, None)];
+        let r = &model_reports(&priced, std::slice::from_ref(&fail))[0];
+        assert!((r.error_rate - 0.25).abs() < 1e-12);
+        // The unpriced request is left out of the mean, not counted as $0.
+        assert!((r.cost_per_request_usd.unwrap() - 0.003).abs() < 1e-12);
+        let unpriced = [ok(0.0, None)];
+        let r = &model_reports(&unpriced, &[])[0];
+        assert_eq!((r.error_rate, r.cost_per_request_usd), (0.0, None));
+        let r = &model_reports(&[], &[fail])[0];
+        assert_eq!((r.error_rate, r.cost_per_request_usd), (1.0, None));
     }
 
     proptest! {

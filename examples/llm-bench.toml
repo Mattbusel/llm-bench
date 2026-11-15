@@ -1,0 +1,40 @@
+# Example config for `llm-bench run --config examples/llm-bench.toml`.
+# Also read from the LLM_BENCH_CONFIG environment variable.
+#
+# Built-in providers need no entry here: openai, anthropic, openrouter,
+# gemini, groq, together, fireworks, deepseek and ollama, with keys from
+# OPENAI_API_KEY, ANTHROPIC_API_KEY, OPENROUTER_API_KEY, GEMINI_API_KEY,
+# GROQ_API_KEY, TOGETHER_API_KEY, FIREWORKS_API_KEY and DEEPSEEK_API_KEY.
+
+# Any OpenAI-compatible server under a name of your choosing. Use it as
+# --models vllm:<model id>. The base URL may end in /v1 or not.
+[providers.vllm]
+base_url = "http://localhost:8000/v1"
+# api_key_env = "VLLM_API_KEY"   # optional; local servers often need no key
+
+[providers.lmstudio]
+base_url = "http://localhost:1234/v1"
+
+# Point a built-in provider somewhere else (a gateway, a regional endpoint).
+# [providers.groq]
+# base_url = "https://my-gateway.example.com/groq/openai/v1"
+# api_key_env = "MY_GATEWAY_KEY"
+
+# Prices in USD per 1 million tokens. A key is "provider:model" (only that
+# provider) or "model" (any provider). Quote keys that contain dots or
+# colons. Without an entry, OpenAI, Anthropic, Gemini, DeepSeek and
+# OpenRouter models use the llm-prices list price, and models on other hosts
+# show n/a. The values below are examples: check each host's pricing page.
+[prices."groq:llama-3.3-70b-versatile"]
+input = 0.59
+output = 0.79
+# cached_input = 0.295   # optional: price of prompt tokens read from the
+#                        # host's prompt cache; defaults to `input`.
+
+[prices."together:meta-llama/Llama-3.3-70B-Instruct-Turbo"]
+input = 0.88
+output = 0.88
+
+[prices."vllm:meta-llama/Llama-3.1-8B-Instruct"]
+input = 0.0
+output = 0.0

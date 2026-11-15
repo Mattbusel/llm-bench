@@ -1,8 +1,8 @@
 //! # llm-bench
 //!
-//! Benchmark LLM providers from the command line: p50/p99 latency (or time
-//! to first token with `--stream`), tokens per second, cost and success
-//! rate, as a table, JSON or CSV.
+//! Compare LLM providers on your own prompts from the command line: time
+//! to first token (`--stream`), p50/p95 total latency, tokens per second,
+//! error rate and cost per request, as a table, Markdown, JSON or CSV.
 //!
 //! ## Entry points
 //! - `llm-bench run`      -  execute a benchmark
@@ -63,13 +63,13 @@ async fn run() -> Result<(), BenchError> {
 
 async fn run_benchmark(args: cli::RunArgs) -> Result<(), BenchError> {
     // Validate configuration before touching the network
-    let config = cli::build_config(&args)?;
+    let (config, prices) = cli::build_plan(&args)?;
 
     let total_tasks =
         config.providers.len() * config.prompts.len() * config.runs_per_prompt as usize;
 
-    // With --output json or csv, stdout carries only the data, so status
-    // lines go to stderr (before 0.3.0 they were mixed into the JSON).
+    // With --output markdown, json or csv, stdout carries only the data, so
+    // status lines go to stderr (before 0.3.0 they were mixed into the JSON).
     let status_line = |line: String| {
         if matches!(args.output, OutputFormat::Table) {
             println!("{line}");
@@ -114,7 +114,7 @@ async fn run_benchmark(args: cli::RunArgs) -> Result<(), BenchError> {
     });
 
     //  Run benchmark
-    let bench_runner = runner::BenchRunner::new()?;
+    let bench_runner = runner::BenchRunner::new()?.with_prices(prices);
 
     let (results, failures) = bench_runner
         .run_detailed(&config, move |done, _total| {
@@ -143,11 +143,10 @@ async fn run_benchmark(args: cli::RunArgs) -> Result<(), BenchError> {
     ));
 
     //  Output
+    let reports = llm_bench::stats::model_reports(&results, &failures);
     match args.output {
-        OutputFormat::Table => {
-            let summaries = report::generate_summary_with_failures(&results, &failures);
-            report::print_table(&summaries);
-        }
+        OutputFormat::Table => report::print_comparison(&reports),
+        OutputFormat::Markdown => print!("{}", report::markdown_table(&reports)),
         OutputFormat::Json => {
             let json = report::print_results_json(&results)?;
             println!("{json}");
@@ -155,12 +154,6 @@ async fn run_benchmark(args: cli::RunArgs) -> Result<(), BenchError> {
         OutputFormat::Csv => {
             print!("{}", report::results_csv(&results)?);
         }
-    }
-    if args.stream && matches!(args.output, OutputFormat::Table) {
-        println!(
-            "{}",
-            "Latency columns are time to first token (--stream).".dimmed()
-        );
     }
 
     let lines = report::failure_lines(&failures);
@@ -179,8 +172,12 @@ async fn run_benchmark(args: cli::RunArgs) -> Result<(), BenchError> {
         status_line(format!("{} Results saved to {}", "→".cyan(), path.display()));
     }
 
+    if let Some(ref path) = args.markdown_file {
+        std::fs::write(path, report::markdown_table(&reports)).map_err(BenchError::Io)?;
+        status_line(format!("{} Markdown table saved to {}", "→".cyan(), path.display()));
+    }
+
     if let Some(ref path) = args.summary_file {
-        let reports = llm_bench::stats::model_reports(&results, &failures);
         let json = serde_json::to_string_pretty(&reports).map_err(BenchError::SerdeJson)?;
         std::fs::write(path, json).map_err(BenchError::Io)?;
         status_line(format!("{} Summary saved to {}", "→".cyan(), path.display()));
@@ -198,26 +195,42 @@ async fn run_benchmark(args: cli::RunArgs) -> Result<(), BenchError> {
 fn print_models_table() {
     println!(
         "\n{}\n",
-        "Supported models and pricing (USD per 1 000 tokens)".bold()
+        format!(
+            "List prices, USD per 1M tokens (llm-prices, checked {})",
+            providers::prices_date()
+        )
+        .bold()
     );
+    let width = providers::supported_models()
+        .iter()
+        .map(|m| m.model.len())
+        .max()
+        .unwrap_or(18)
+        .max(5);
     let header = format!(
-        "{:<11} {:<18} {:>11} {:>15}",
-        "Provider", "Model", "Prompt/1k", "Completion/1k"
+        "{:<10} {:<width$} {:>10} {:>10}",
+        "Provider", "Model", "Input/1M", "Output/1M"
     );
     println!("{}", header.bold());
     println!("{}", "─".repeat(header.chars().count()).dimmed());
 
     for m in providers::supported_models().iter() {
         println!(
-            "{:<11} {:<18} {:>11} {:>15}",
+            "{:<10} {:<width$} {:>10} {:>10}",
             m.provider,
             m.model,
-            format!("${:.6}", m.prompt_per_1k),
-            format!("${:.6}", m.completion_per_1k)
+            format!("${:.3}", m.prompt_per_1k * 1000.0),
+            format!("${:.3}", m.completion_per_1k * 1000.0)
         );
     }
+    let names: Vec<&str> = runner::BUILTIN_PROVIDERS.iter().map(|(n, _)| *n).collect();
     println!(
-        "\nCost is each response's token counts times these prices (OpenRouter's own reported cost is used when present).\nOther models show n/a for cost.\n{} llm-bench run --models gpt-4o-mini,claude-haiku-4-5 --prompts \"Say hi\"\n",
+        "\nProviders: {}, or any OpenAI-compatible URL from --config.\n\
+         Cost: the provider's own reported cost (OpenRouter), else a [prices] entry in --config,\n\
+         else these list prices for openai, anthropic, gemini, deepseek and openrouter models.\n\
+         Models hosted elsewhere (Groq, Together, Fireworks, Ollama, custom) show n/a without a [prices] entry.\n\
+         {} llm-bench run --models gpt-4o-mini,claude-haiku-4-5 --prompts \"Say hi\" --stream\n",
+        names.join(", "),
         "Next:".cyan().bold()
     );
 }
