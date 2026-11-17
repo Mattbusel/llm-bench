@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.4.1] - 2026-11-16
+
+- Package metadata only: `repository` points at https://github.com/Mattbusel/llm-bench (the GitHub repository, where issues, releases and the dependents graph are), no code change from 0.4.0.
+
 ## [0.4.0] - 2026-11-14
 
 ### Added

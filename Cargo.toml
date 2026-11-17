@@ -2,13 +2,13 @@
 
 [package]
 name = "llm-bench"
-version = "0.4.0"
+version = "0.4.1"
 edition = "2021"
 description = "Compare LLM providers on your own prompts: OpenAI, Anthropic, OpenRouter, Groq, Together, Fireworks, DeepSeek, Gemini, Ollama or any OpenAI-compatible URL; time to first token, p50/p95 latency, tokens per second, error rate and cost, as a table, Markdown or JSON"
 rust-version = "1.87"
 license = "MIT"
-repository = "https://gitlab.com/mattbusel/llm-bench"
-homepage = "https://gitlab.com/mattbusel/llm-bench"
+repository = "https://github.com/Mattbusel/llm-bench"
+homepage = "https://github.com/Mattbusel/llm-bench"
 readme = "README.md"
 documentation = "https://docs.rs/llm-bench"
 include = ["src/**/*", "tests/**/*", "examples/**/*", "scripts/mock_server.py", "README.md", "CHANGELOG.md", "LICENSE", "Cargo.toml", "Cargo.lock"]
