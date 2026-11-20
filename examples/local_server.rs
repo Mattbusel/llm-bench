@@ -37,7 +37,9 @@ async fn start_mock() -> std::io::Result<String> {
                     .await;
                 tokio::time::sleep(std::time::Duration::from_millis(120)).await;
                 for word in ["Hello", " from", " a", " local", " server"] {
-                    let chunk = format!("data: {{\"choices\":[{{\"delta\":{{\"content\":\"{word}\"}}}}]}}\n\n");
+                    let chunk = format!(
+                        "data: {{\"choices\":[{{\"delta\":{{\"content\":\"{word}\"}}}}]}}\n\n"
+                    );
                     let _ = sock.write_all(chunk.as_bytes()).await;
                     let _ = sock.flush().await;
                     tokio::time::sleep(std::time::Duration::from_millis(15)).await;
@@ -74,7 +76,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     for m in model_reports(&results, &failures) {
         println!("{} ({} ok, {} failed)", m.model, m.succeeded, m.failed);
         if let Some(t) = m.ttft_ms {
-            println!("  time to first token: p50 {} ms, p95 {} ms, mean {:.1} ms", t.p50, t.p95, t.mean);
+            println!(
+                "  time to first token: p50 {} ms, p95 {} ms, mean {:.1} ms",
+                t.p50, t.p95, t.mean
+            );
         }
         if let Some(t) = m.total_ms {
             println!("  full response:       p50 {} ms, p95 {} ms", t.p50, t.p95);

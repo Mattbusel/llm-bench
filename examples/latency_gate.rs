@@ -21,7 +21,11 @@ use llm_bench::types::{BenchConfig, ProviderConfig};
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args().skip(1);
     let target = args.next().unwrap_or_else(|| "ollama:qwen2.5:0.5b".into());
-    let limit_ms: f64 = args.next().map(|s| s.parse()).transpose()?.unwrap_or(1000.0);
+    let limit_ms: f64 = args
+        .next()
+        .map(|s| s.parse())
+        .transpose()?
+        .unwrap_or(1000.0);
     let (provider, model) = target.split_once(':').ok_or("use provider:model")?;
     let key_var = BUILTIN_PROVIDERS
         .iter()
@@ -29,7 +33,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .map_or("", |(_, var)| *var);
     let base_url = match provider {
         "ollama" => std::env::var("OLLAMA_HOST")
-            .map(|h| if h.contains("://") { h } else { format!("http://{h}") })
+            .map(|h| {
+                if h.contains("://") {
+                    h
+                } else {
+                    format!("http://{h}")
+                }
+            })
             .unwrap_or_default(),
         _ => String::new(),
     };
@@ -57,7 +67,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         eprintln!("{model}: every request failed: {failures:?}");
         std::process::exit(2);
     };
-    println!("{model}: p95 time to first token {} ms (limit {limit_ms} ms), {} failed", ttft.p95, report.failed);
+    println!(
+        "{model}: p95 time to first token {} ms (limit {limit_ms} ms), {} failed",
+        ttft.p95, report.failed
+    );
     if ttft.p95 > limit_ms || report.failed > 0 {
         std::process::exit(1);
     }

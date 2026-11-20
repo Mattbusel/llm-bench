@@ -163,7 +163,10 @@ mod tests {
     #[test]
     fn known_values() {
         let s = Stats::of((1..=100).map(f64::from)).unwrap();
-        assert_eq!((s.min, s.p50, s.p90, s.p95, s.p99, s.max), (1.0, 50.0, 90.0, 95.0, 99.0, 100.0));
+        assert_eq!(
+            (s.min, s.p50, s.p90, s.p95, s.p99, s.max),
+            (1.0, 50.0, 90.0, 95.0, 99.0, 100.0)
+        );
         assert!((s.mean - 50.5).abs() < 1e-12);
         // Sample standard deviation of 1..=100.
         assert!((s.stddev - 29.011_491_975_882_016).abs() < 1e-9);
@@ -200,7 +203,11 @@ mod tests {
             model: "m".into(),
             error: "HTTP 500".into(),
         };
-        let priced = [ok(0.002, Some(CostSource::LlmPrices)), ok(0.004, Some(CostSource::LlmPrices)), ok(0.0, None)];
+        let priced = [
+            ok(0.002, Some(CostSource::LlmPrices)),
+            ok(0.004, Some(CostSource::LlmPrices)),
+            ok(0.0, None),
+        ];
         let r = &model_reports(&priced, std::slice::from_ref(&fail))[0];
         assert!((r.error_rate - 0.25).abs() < 1e-12);
         // The unpriced request is left out of the mean, not counted as $0.

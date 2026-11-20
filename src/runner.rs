@@ -34,8 +34,7 @@ pub const DEFAULT_OLLAMA_BASE_URL: &str = "http://localhost:11434";
 /// OpenRouter's OpenAI-compatible API.
 pub const DEFAULT_OPENROUTER_BASE_URL: &str = "https://openrouter.ai/api/v1";
 /// Google Gemini's OpenAI-compatible API.
-pub const DEFAULT_GEMINI_BASE_URL: &str =
-    "https://generativelanguage.googleapis.com/v1beta/openai";
+pub const DEFAULT_GEMINI_BASE_URL: &str = "https://generativelanguage.googleapis.com/v1beta/openai";
 /// Groq's OpenAI-compatible API.
 pub const DEFAULT_GROQ_BASE_URL: &str = "https://api.groq.com/openai/v1";
 /// Together AI's OpenAI-compatible API.
@@ -672,7 +671,11 @@ mod tests {
             .unwrap();
         assert_eq!((results.len(), failures.len()), (1, 0));
         assert_eq!(results[0].retries, 1);
-        assert!(start.elapsed() >= Duration::from_millis(950), "{:?}", start.elapsed());
+        assert!(
+            start.elapsed() >= Duration::from_millis(950),
+            "{:?}",
+            start.elapsed()
+        );
     }
 
     #[tokio::test]
@@ -886,7 +889,11 @@ mod tests {
         // OpenAI-compatible: 600k uncached at $2, 400k cached at $0.50, 1M out at $4.
         let mut r = base("groq", "m");
         apply_configured_price(&mut r, &prices);
-        assert!((r.cost_usd - (1.2 + 0.2 + 4.0)).abs() < 1e-9, "{}", r.cost_usd);
+        assert!(
+            (r.cost_usd - (1.2 + 0.2 + 4.0)).abs() < 1e-9,
+            "{}",
+            r.cost_usd
+        );
         // No cached_input: every prompt token at $2, never more than prompt_tokens.
         let mut r = base("groq", "flat");
         apply_configured_price(&mut r, &prices);
@@ -896,6 +903,10 @@ mod tests {
         let mut r = base("anthropic", "m");
         r.cache_write_prompt_tokens = 100_000;
         apply_configured_price(&mut r, &prices);
-        assert!((r.cost_usd - (2.2 + 0.2 + 4.0)).abs() < 1e-9, "{}", r.cost_usd);
+        assert!(
+            (r.cost_usd - (2.2 + 0.2 + 4.0)).abs() < 1e-9,
+            "{}",
+            r.cost_usd
+        );
     }
 }

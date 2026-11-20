@@ -512,19 +512,26 @@ api_key_env = "LLM_BENCH_E2E_UNSET_KEY"
     {
         let log = seen.log.lock().unwrap();
         assert_eq!(log.len(), 2, "{log:?}");
-        assert!(log.iter().any(|(path, auth, model)| path == "/v1/chat/completions"
-            && auth.is_empty()
-            && model == "foo"));
-        assert!(log.iter().any(|(path, auth, model)| path == "/proxy/v1/chat/completions"
-            && auth == "Bearer proxy-key"
-            && model == "gpt-4o"));
+        assert!(log
+            .iter()
+            .any(|(path, auth, model)| path == "/v1/chat/completions"
+                && auth.is_empty()
+                && model == "foo"));
+        assert!(log
+            .iter()
+            .any(|(path, auth, model)| path == "/proxy/v1/chat/completions"
+                && auth == "Bearer proxy-key"
+                && model == "gpt-4o"));
     }
 
     // api_key_env names an unset variable: a setup error, no requests sent.
     let out = run("needs-key:m").await.unwrap();
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(!out.status.success());
-    assert!(stderr.contains("LLM_BENCH_E2E_UNSET_KEY is not set"), "{stderr}");
+    assert!(
+        stderr.contains("LLM_BENCH_E2E_UNSET_KEY is not set"),
+        "{stderr}"
+    );
     assert_eq!(seen.requests.load(Ordering::SeqCst), 2);
     let _ = std::fs::remove_file(&cfg);
 }

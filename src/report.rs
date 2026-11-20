@@ -185,7 +185,10 @@ pub fn print_comparison(reports: &[ModelReport]) {
     if let Some(line) = comparison_verdict(reports) {
         println!("{}", line.green());
     }
-    if reports.iter().any(|m| m.succeeded > 0 && m.ttft_ms.is_none()) {
+    if reports
+        .iter()
+        .any(|m| m.succeeded > 0 && m.ttft_ms.is_none())
+    {
         println!("{}", "TTFT needs --stream.".dimmed());
     }
     println!();
@@ -373,9 +376,7 @@ pub fn verdict_line(summaries: &[BenchSummary]) -> Option<String> {
     let fastest = live.iter().min_by_key(|s| s.p50_latency_ms)?;
     let mut line = format!(
         "{} {} (p50 {} ms)",
-        "Fastest:",
-        fastest.model,
-        fastest.p50_latency_ms
+        "Fastest:", fastest.model, fastest.p50_latency_ms
     );
     // Only compare cost between models that have a price.
     let priced: Vec<&&BenchSummary> = live.iter().filter(|s| s.total_cost_usd > 0.0).collect();
@@ -386,9 +387,7 @@ pub fn verdict_line(summaries: &[BenchSummary]) -> Option<String> {
         {
             line.push_str(&format!(
                 "   {} {} (${:.6} per request)",
-                "Cheapest:",
-                cheapest.model,
-                cheapest.avg_cost_usd
+                "Cheapest:", cheapest.model, cheapest.avg_cost_usd
             ));
         }
     }
@@ -898,7 +897,13 @@ mod tests {
 
     //  comparison table
 
-    fn streamed(provider: &str, model: &str, ttft: u64, total: u64, cost: Option<f64>) -> BenchResult {
+    fn streamed(
+        provider: &str,
+        model: &str,
+        ttft: u64,
+        total: u64,
+        cost: Option<f64>,
+    ) -> BenchResult {
         let mut r = make_result(provider, model, ttft, cost.unwrap_or(0.0), 100.0);
         r.ttft_ms = Some(ttft);
         r.total_ms = total;
@@ -921,27 +926,71 @@ mod tests {
         let reports = crate::stats::model_reports(&results, &failures);
         let rows = comparison_rows(&reports);
         assert_eq!(rows.len(), 3);
-        assert_eq!(rows[0], [
-            "groq:llama|70b", "2/2", "0.0%", "100", "400", "500", "100.0", "n/a", "n/a",
-        ].map(String::from));
-        assert_eq!(rows[1], [
-            "openai:gpt-4o-mini", "2/3", "33.3%", "300", "900", "1000", "100.0", "$0.000300", "$0.000600",
-        ].map(String::from));
-        assert_eq!(rows[2], [
-            "together:dead", "0/1", "100.0%", "-", "-", "-", "-", "-", "-",
-        ].map(String::from));
+        assert_eq!(
+            rows[0],
+            [
+                "groq:llama|70b",
+                "2/2",
+                "0.0%",
+                "100",
+                "400",
+                "500",
+                "100.0",
+                "n/a",
+                "n/a",
+            ]
+            .map(String::from)
+        );
+        assert_eq!(
+            rows[1],
+            [
+                "openai:gpt-4o-mini",
+                "2/3",
+                "33.3%",
+                "300",
+                "900",
+                "1000",
+                "100.0",
+                "$0.000300",
+                "$0.000600",
+            ]
+            .map(String::from)
+        );
+        assert_eq!(
+            rows[2],
+            [
+                "together:dead",
+                "0/1",
+                "100.0%",
+                "-",
+                "-",
+                "-",
+                "-",
+                "-",
+                "-",
+            ]
+            .map(String::from)
+        );
 
         let md = markdown_table(&reports);
         let lines: Vec<&str> = md.lines().collect();
         assert_eq!(lines[0], "| Model | OK | Errors | TTFT p50 (ms) | Total p50 (ms) | Total p95 (ms) | Tok/s | Cost/req | Total cost |");
         assert_eq!(lines[1], "|:---|---:|---:|---:|---:|---:|---:|---:|---:|");
-        assert!(lines[2].starts_with("| groq:llama\\|70b | 2/2 |"), "{}", lines[2]);
+        assert!(
+            lines[2].starts_with("| groq:llama\\|70b | 2/2 |"),
+            "{}",
+            lines[2]
+        );
         // Every table row has the same number of unescaped cell separators.
         for l in &lines[..5] {
             assert_eq!(l.replace("\\|", "").matches('|').count(), 10, "{l}");
         }
         assert_eq!(lines[5], "");
-        assert!(lines[6].contains("Fastest: groq:llama|70b (TTFT p50 100 ms)"), "{}", lines[6]);
+        assert!(
+            lines[6].contains("Fastest: groq:llama|70b (TTFT p50 100 ms)"),
+            "{}",
+            lines[6]
+        );
         // Only one model is priced, so no "Cheapest".
         assert!(!lines[6].contains("Cheapest"), "{}", lines[6]);
     }
@@ -955,8 +1004,14 @@ mod tests {
         let reports = crate::stats::model_reports(&[a, b], &[]);
         let v = comparison_verdict(&reports).unwrap();
         assert!(v.contains("Fastest: openai:b (total p50 310 ms)"), "{v}");
-        assert!(v.contains("Highest throughput: openai:b (80.0 tok/s)"), "{v}");
-        assert!(v.contains("Cheapest: openai:b ($0.001000 per request)"), "{v}");
+        assert!(
+            v.contains("Highest throughput: openai:b (80.0 tok/s)"),
+            "{v}"
+        );
+        assert!(
+            v.contains("Cheapest: openai:b ($0.001000 per request)"),
+            "{v}"
+        );
         assert!(comparison_verdict(&reports[..1]).is_none());
     }
 

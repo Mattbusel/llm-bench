@@ -37,10 +37,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         provider("openai", "gpt-4o-mini", Some("OPENAI_API_KEY")),
         provider("anthropic", "claude-haiku-4-5", Some("ANTHROPIC_API_KEY")),
         provider("gemini", "gemini-2.5-flash", Some("GEMINI_API_KEY")),
-        provider("openrouter", "meta-llama/llama-3.3-70b-instruct", Some("OPENROUTER_API_KEY")),
+        provider(
+            "openrouter",
+            "meta-llama/llama-3.3-70b-instruct",
+            Some("OPENROUTER_API_KEY"),
+        ),
         provider("groq", "llama-3.3-70b-versatile", Some("GROQ_API_KEY")),
-        provider("together", "meta-llama/Llama-3.3-70B-Instruct-Turbo", Some("TOGETHER_API_KEY")),
-        provider("fireworks", "accounts/fireworks/models/llama-v3p3-70b-instruct", Some("FIREWORKS_API_KEY")),
+        provider(
+            "together",
+            "meta-llama/Llama-3.3-70B-Instruct-Turbo",
+            Some("TOGETHER_API_KEY"),
+        ),
+        provider(
+            "fireworks",
+            "accounts/fireworks/models/llama-v3p3-70b-instruct",
+            Some("FIREWORKS_API_KEY"),
+        ),
         provider("deepseek", "deepseek-v4-flash", Some("DEEPSEEK_API_KEY")),
     ]
     .into_iter()

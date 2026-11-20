@@ -341,7 +341,11 @@ pub fn build_plan(args: &RunArgs) -> Result<(BenchConfig, PriceTable), BenchErro
         let base_url = match provider_name.as_str() {
             "openai" | "anthropic" => normalize_base_url(raw_url),
             "ollama" => normalize_ollama_url(raw_url),
-            _ => raw_url.unwrap_or("").trim().trim_end_matches('/').to_owned(),
+            _ => raw_url
+                .unwrap_or("")
+                .trim()
+                .trim_end_matches('/')
+                .to_owned(),
         };
 
         match builtin {
@@ -908,12 +912,18 @@ mod tests {
 
     #[test]
     fn test_resolve_model_new_prefixes() {
-        assert_eq!(resolve_model("ollama:qwen2.5:0.5b").ok(), Some(("ollama", "qwen2.5:0.5b")));
+        assert_eq!(
+            resolve_model("ollama:qwen2.5:0.5b").ok(),
+            Some(("ollama", "qwen2.5:0.5b"))
+        );
         assert_eq!(
             resolve_model("openrouter:meta-llama/llama-3.3-70b-instruct").ok(),
             Some(("openrouter", "meta-llama/llama-3.3-70b-instruct"))
         );
-        assert_eq!(resolve_model("gemini-2.5-flash").ok(), Some(("gemini", "gemini-2.5-flash")));
+        assert_eq!(
+            resolve_model("gemini-2.5-flash").ok(),
+            Some(("gemini", "gemini-2.5-flash"))
+        );
         assert_eq!(resolve_model("o4-mini").ok(), Some(("openai", "o4-mini")));
         // A colon inside a bare model id is not a provider prefix.
         assert!(resolve_model("qwen2.5:0.5b").is_err());
@@ -935,7 +945,10 @@ mod tests {
     #[test]
     fn test_build_config_hosted_providers_need_their_keys() {
         let mut args = minimal_run_args("openrouter:openai/gpt-4o-mini", "openai", "sk");
-        let err = build_config(&args).err().map(|e| e.to_string()).unwrap_or_default();
+        let err = build_config(&args)
+            .err()
+            .map(|e| e.to_string())
+            .unwrap_or_default();
         assert!(err.contains("OPENROUTER_API_KEY"), "{err}");
         args.openrouter_key = Some("or-key".into());
         let c = build_config(&args).unwrap();
@@ -992,7 +1005,10 @@ mod tests {
             ("deepseek", "DEEPSEEK_API_KEY"),
         ] {
             let mut a = args(&[&format!("{prefix}:some/model:tag")]);
-            let err = build_config(&a).err().map(|e| e.to_string()).unwrap_or_default();
+            let err = build_config(&a)
+                .err()
+                .map(|e| e.to_string())
+                .unwrap_or_default();
             assert!(err.contains(env), "{prefix}: {err}");
             assert!(err.contains(&format!("--{prefix}-key")), "{prefix}: {err}");
             let k = Some(format!("{prefix}-secret"));
@@ -1008,7 +1024,10 @@ mod tests {
             assert_eq!(c.providers[0].api_key, format!("{prefix}-secret"));
             assert_eq!(c.providers[0].base_url, "");
         }
-        assert_eq!(resolve_model("deepseek-v4-flash").ok(), Some(("deepseek", "deepseek-v4-flash")));
+        assert_eq!(
+            resolve_model("deepseek-v4-flash").ok(),
+            Some(("deepseek", "deepseek-v4-flash"))
+        );
     }
 
     #[test]
@@ -1037,9 +1056,15 @@ output = 0.2
         assert_eq!(c.providers[0].base_url, "http://127.0.0.1:8000/v1");
         assert!(c.providers[0].api_key.is_empty());
         // Built-in provider pointed elsewhere, key from the file.
-        assert_eq!(c.providers[1].base_url, "https://gateway.example/groq/openai/v1");
+        assert_eq!(
+            c.providers[1].base_url,
+            "https://gateway.example/groq/openai/v1"
+        );
         assert_eq!(c.providers[1].api_key, "from-file");
-        assert_eq!(prices.get("vllm", "qwen2.5:0.5b").map(|p| p.output), Some(0.2));
+        assert_eq!(
+            prices.get("vllm", "qwen2.5:0.5b").map(|p| p.output),
+            Some(0.2)
+        );
         // A flag key beats the file.
         a.groq_key = Some("from-flag".into());
         assert_eq!(build_config(&a).unwrap().providers[1].api_key, "from-flag");
@@ -1070,7 +1095,12 @@ base_url = "http://127.0.0.1:9/claude"
 base_url = "http://127.0.0.1:9/o3"
 "#,
         );
-        let mut a = args(&["deepseek-local:foo", "gpt-proxy:gpt-4o", "claude-gw:bar", "o3-mirror:o3"]);
+        let mut a = args(&[
+            "deepseek-local:foo",
+            "gpt-proxy:gpt-4o",
+            "claude-gw:bar",
+            "o3-mirror:o3",
+        ]);
         a.config = Some(path.clone());
         // No DEEPSEEK/OPENAI/ANTHROPIC key is set on `a`; this used to fail
         // with "no API key for deepseek".
@@ -1090,8 +1120,11 @@ base_url = "http://127.0.0.1:9/o3"
             ]
         );
         // Bare names and explicit built-in prefixes are unchanged.
-        let file = FileConfig::parse("[providers.deepseek-local]
-base_url = \"http://x\"").unwrap();
+        let file = FileConfig::parse(
+            "[providers.deepseek-local]
+base_url = \"http://x\"",
+        )
+        .unwrap();
         assert_eq!(
             resolve_model_with("deepseek-chat", &file).ok(),
             Some(("deepseek".to_owned(), "deepseek-chat"))
@@ -1128,14 +1161,20 @@ api_key_env = "LLM_BENCH_TEST_UNSET_VARIABLE_3"
         );
         let mut a = args(&["myhost:m"]);
         a.config = Some(path.clone());
-        let err = build_config(&a).err().map(|e| e.to_string()).unwrap_or_default();
+        let err = build_config(&a)
+            .err()
+            .map(|e| e.to_string())
+            .unwrap_or_default();
         assert!(err.contains("LLM_BENCH_TEST_UNSET_VARIABLE_2"), "{err}");
         assert!(err.contains("myhost"), "{err}");
         // A built-in provider redirected by the file: the flag key (or its
         // usual variable) still satisfies it; without one, the same error.
         let mut g = args(&["groq:llama"]);
         g.config = Some(path.clone());
-        let err = build_config(&g).err().map(|e| e.to_string()).unwrap_or_default();
+        let err = build_config(&g)
+            .err()
+            .map(|e| e.to_string())
+            .unwrap_or_default();
         assert!(err.contains("LLM_BENCH_TEST_UNSET_VARIABLE_3"), "{err}");
         g.groq_key = Some("gk".into());
         assert_eq!(build_config(&g).unwrap().providers[0].api_key, "gk");
@@ -1148,7 +1187,10 @@ api_key_env = "LLM_BENCH_TEST_UNSET_VARIABLE_3"
         let mut a = args(&["gpt-4o-mini"]);
         a.openai_key = Some("k".into());
         a.config = Some(path.clone());
-        let err = build_config(&a).err().map(|e| e.to_string()).unwrap_or_default();
+        let err = build_config(&a)
+            .err()
+            .map(|e| e.to_string())
+            .unwrap_or_default();
         assert!(err.contains("base_urll"), "{err}");
         assert!(err.contains(&path.display().to_string()), "{err}");
         let _ = std::fs::remove_file(&path);
@@ -1159,11 +1201,25 @@ api_key_env = "LLM_BENCH_TEST_UNSET_VARIABLE_3"
     #[test]
     fn test_repeat_alias_markdown_output_and_flags_parse() {
         let cli = Cli::try_parse_from([
-            "llm-bench", "run", "--models", "ollama:x", "--prompts", "hi", "--repeat", "7",
-            "--concurrency", "5", "--output", "md", "--markdown-file", "out.md",
+            "llm-bench",
+            "run",
+            "--models",
+            "ollama:x",
+            "--prompts",
+            "hi",
+            "--repeat",
+            "7",
+            "--concurrency",
+            "5",
+            "--output",
+            "md",
+            "--markdown-file",
+            "out.md",
         ])
         .unwrap();
-        let Command::Run(a) = cli.command else { unreachable!() };
+        let Command::Run(a) = cli.command else {
+            unreachable!()
+        };
         assert_eq!((a.runs, a.concurrency), (7, 5));
         assert!(matches!(a.output, OutputFormat::Markdown));
         assert_eq!(a.markdown_file, Some(PathBuf::from("out.md")));

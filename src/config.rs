@@ -232,7 +232,11 @@ impl FileConfig {
         if p.api_key.as_deref().is_some_and(|k| !k.trim().is_empty()) {
             return None;
         }
-        let var = p.api_key_env.as_deref().map(str::trim).filter(|v| !v.is_empty())?;
+        let var = p
+            .api_key_env
+            .as_deref()
+            .map(str::trim)
+            .filter(|v| !v.is_empty())?;
         match std::env::var(var) {
             Ok(v) if !v.trim().is_empty() => None,
             _ => Some(var),
@@ -312,18 +316,24 @@ output = 2.0
         let quoted = FileConfig::parse("[prices.\"gpt-4.1\"]\ninput = 1\noutput = 2").unwrap();
         assert!(quoted.price_table().get("openai", "gpt-4.1").is_some());
         assert_eq!(FileConfig::parse("").unwrap(), FileConfig::default());
-        assert!(FileConfig::parse("[prices.m]
+        assert!(FileConfig::parse(
+            "[prices.m]
 input=1
 output=1
-cached_input=-0.5").is_err());
+cached_input=-0.5"
+        )
+        .is_err());
     }
 
     #[test]
     fn cached_input_price_defaults_to_input() {
-        let c = FileConfig::parse("[prices.m]
+        let c = FileConfig::parse(
+            "[prices.m]
 input = 2.0
 output = 4.0
-cached_input = 0.5").unwrap();
+cached_input = 0.5",
+        )
+        .unwrap();
         let p = c.price_table().get("x", "m").unwrap();
         assert_eq!(p.cached_input, Some(0.5));
         // 1M uncached at $2 + 1M cached at $0.50 + 1M out at $4.
@@ -337,17 +347,26 @@ cached_input = 0.5").unwrap();
     fn missing_key_env_names_the_unset_variable() {
         let c = FileConfig::parse(SAMPLE).unwrap();
         // groq asks for LLM_BENCH_TEST_UNSET_VARIABLE, which is not set.
-        assert_eq!(c.missing_key_env("groq"), Some("LLM_BENCH_TEST_UNSET_VARIABLE"));
+        assert_eq!(
+            c.missing_key_env("groq"),
+            Some("LLM_BENCH_TEST_UNSET_VARIABLE")
+        );
         // vllm has a key in the file; unknown providers ask for nothing.
         assert_eq!(c.missing_key_env("vllm"), None);
         assert_eq!(c.missing_key_env("nope"), None);
-        let no_env = FileConfig::parse("[providers.lm]
-base_url = \"http://x\"").unwrap();
+        let no_env = FileConfig::parse(
+            "[providers.lm]
+base_url = \"http://x\"",
+        )
+        .unwrap();
         assert_eq!(no_env.missing_key_env("lm"), None);
         // PATH is set on every platform the tests run on.
-        let set = FileConfig::parse("[providers.lm]
+        let set = FileConfig::parse(
+            "[providers.lm]
 base_url = \"http://x\"
-api_key_env = \"PATH\"").unwrap();
+api_key_env = \"PATH\"",
+        )
+        .unwrap();
         assert_eq!(set.missing_key_env("lm"), None);
     }
 }

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.2 (2026-11-20)
+
+- README opens with the side this crate takes: a leaderboard is someone else's prompts on someone else's network. Why it exists, why it beats the usual approach, why adopt it today, who it is for and the tradeoffs made on purpose.
+- crates.io description and keywords say the same thing.
+
 ## [0.4.1] - 2026-11-16
 
 - Package metadata only: `repository` points at https://github.com/Mattbusel/llm-bench (the GitHub repository, where issues, releases and the dependents graph are), no code change from 0.4.0.

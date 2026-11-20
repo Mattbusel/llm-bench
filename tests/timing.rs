@@ -23,7 +23,9 @@ async fn streaming_server(hits: Arc<AtomicUsize>) -> String {
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move {
         loop {
-            let Ok((mut sock, _)) = listener.accept().await else { break };
+            let Ok((mut sock, _)) = listener.accept().await else {
+                break;
+            };
             let hits = Arc::clone(&hits);
             tokio::spawn(async move {
                 let mut buf = vec![0u8; 16 * 1024];
@@ -39,7 +41,11 @@ async fn streaming_server(hits: Arc<AtomicUsize>) -> String {
                     if let Some(h) = text.find("\r\n\r\n") {
                         let len = text[..h]
                             .lines()
-                            .find_map(|l| l.to_ascii_lowercase().strip_prefix("content-length:").map(|v| v.trim().parse::<usize>().unwrap_or(0)))
+                            .find_map(|l| {
+                                l.to_ascii_lowercase()
+                                    .strip_prefix("content-length:")
+                                    .map(|v| v.trim().parse::<usize>().unwrap_or(0))
+                            })
                             .unwrap_or(0);
                         if got.len() >= h + 4 + len {
                             break;
@@ -51,7 +57,9 @@ async fn streaming_server(hits: Arc<AtomicUsize>) -> String {
                     .write_all(b"HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\nconnection: close\r\n\r\n")
                     .await;
                 tokio::time::sleep(FIRST_TOKEN_DELAY).await;
-                let _ = sock.write_all(b"data: {\"choices\":[{\"delta\":{\"content\":\"Hello\"}}]}\n\n").await;
+                let _ = sock
+                    .write_all(b"data: {\"choices\":[{\"delta\":{\"content\":\"Hello\"}}]}\n\n")
+                    .await;
                 let _ = sock.flush().await;
                 tokio::time::sleep(DECODE_DELAY).await;
                 let _ = sock.write_all(b"data: {\"choices\":[{\"delta\":{\"content\":\" world, ten more tokens\"}}]}\n\n").await;
@@ -84,7 +92,11 @@ async fn streamed_timings_match_the_server() {
         retries: 0,
         warmup: 1,
     };
-    let (results, failures) = BenchRunner::new().unwrap().run_detailed(&config, |_, _| {}).await.unwrap();
+    let (results, failures) = BenchRunner::new()
+        .unwrap()
+        .run_detailed(&config, |_, _| {})
+        .await
+        .unwrap();
     assert!(failures.is_empty(), "{failures:?}");
     assert_eq!(results.len(), 3);
     // The warm-up request reached the server but is not in the results.
@@ -97,7 +109,11 @@ async fn streamed_timings_match_the_server() {
         // Lower bounds are exact (the server waits that long); upper bounds
         // allow 150 ms of local scheduling and connection set-up.
         assert!(ttft >= first && ttft < first + 150, "ttft {ttft}");
-        assert!(r.total_ms >= total && r.total_ms < total + 150, "total {}", r.total_ms);
+        assert!(
+            r.total_ms >= total && r.total_ms < total + 150,
+            "total {}",
+            r.total_ms
+        );
         assert_eq!(r.latency_ms, ttft);
         assert_eq!(r.completion_tokens, 11);
         // 10 tokens after the first, over (total - ttft) ms.

@@ -169,18 +169,30 @@ async fn run_benchmark(args: cli::RunArgs) -> Result<(), BenchError> {
     if let Some(ref path) = args.output_file {
         let json = report::print_results_json(&results)?;
         std::fs::write(path, &json).map_err(BenchError::Io)?;
-        status_line(format!("{} Results saved to {}", "→".cyan(), path.display()));
+        status_line(format!(
+            "{} Results saved to {}",
+            "→".cyan(),
+            path.display()
+        ));
     }
 
     if let Some(ref path) = args.markdown_file {
         std::fs::write(path, report::markdown_table(&reports)).map_err(BenchError::Io)?;
-        status_line(format!("{} Markdown table saved to {}", "→".cyan(), path.display()));
+        status_line(format!(
+            "{} Markdown table saved to {}",
+            "→".cyan(),
+            path.display()
+        ));
     }
 
     if let Some(ref path) = args.summary_file {
         let json = serde_json::to_string_pretty(&reports).map_err(BenchError::SerdeJson)?;
         std::fs::write(path, json).map_err(BenchError::Io)?;
-        status_line(format!("{} Summary saved to {}", "→".cyan(), path.display()));
+        status_line(format!(
+            "{} Summary saved to {}",
+            "→".cyan(),
+            path.display()
+        ));
     }
 
     if success == 0 && failed > 0 {

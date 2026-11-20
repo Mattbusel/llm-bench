@@ -1,12 +1,18 @@
-# llm-bench
+# llm-bench: a leaderboard is someone else's prompts on someone else's network
 
-<!-- outcome-block -->
-**Pick the fastest, cheapest LLM for your prompts from measurements on your own machine: time to first token, p95 latency, tokens per second, cost and success rate.**
+**Why this exists:** Model choice gets made from public leaderboards, and the latency that bills you is not on any of them: your prompts, your region, your provider's p95 at your hour of the day.
 
-**Why this over the alternatives:** Leaderboards measure someone else's prompts on someone else's network. This runs yours against OpenAI, Anthropic, Ollama, Gemini, OpenRouter or any OpenAI-compatible server.
+**Why this instead of the usual approach:** Leaderboards and vendor dashboards report one number per model, measured once, far away. llm-bench sends your prompts concurrently to the models you are choosing between and reports time to first token, p50/p95, tokens per second, cost (priced from llm-prices) and success rate, from your machine, as a table or JSON.
 
-**Guarantee:** if it doesn't do what this README says, [open an issue](https://github.com/Mattbusel/llm-bench/issues) and I'll fix it.
-<!-- outcome-block -->
+**Why adopt it today:** `cargo install llm-bench`, point it at a TOML file of your prompts, and the next model decision comes with a receipt. The `latency_gate` example fails CI when a model's p95 or cost goes past your limit.
+
+**Built for:** engineers picking or switching an LLM provider for a latency- or cost-sensitive product, and teams who want a model change gated in CI.
+
+**Tradeoffs we chose on purpose:**
+
+- It measures, it does not rank: no composite score, no quality judge. Bring your own eval for answer quality.
+- It counts a failed request as a failure, not a retry. A model that times out 3% of the time shows 97%.
+
 
 A command-line tool and Rust library for anyone choosing an LLM: it sends the same prompts to several models and measures time to first token, latency percentiles, tokens per second, cost and success rate, from your own machine.
 

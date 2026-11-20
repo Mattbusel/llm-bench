@@ -147,7 +147,11 @@ pub fn supported_models() -> &'static [ModelInfo] {
             .filter(|p| p.status == "listed")
             .filter_map(|p| {
                 Some(ModelInfo {
-                    provider: if p.provider == "google" { "gemini" } else { p.provider },
+                    provider: if p.provider == "google" {
+                        "gemini"
+                    } else {
+                        p.provider
+                    },
                     model: p.model,
                     prompt_per_1k: p.input? / 1000.0,
                     completion_per_1k: p.output? / 1000.0,
@@ -729,7 +733,10 @@ mod tests {
 
     #[test]
     fn test_list_price_dated_alias_equals_latest() {
-        assert_eq!(per_1m("claude-haiku-4-5-20251001"), per_1m("claude-haiku-4-5"));
+        assert_eq!(
+            per_1m("claude-haiku-4-5-20251001"),
+            per_1m("claude-haiku-4-5")
+        );
     }
 
     #[test]
@@ -826,7 +833,11 @@ mod tests {
         for name in ["groq", "together", "fireworks", "ollama", "my-vllm"] {
             let mut c = openai_config("", "gpt-4o-mini");
             c.name = name.into();
-            assert_eq!(request_cost(&c, tokens(1000, 1000), None), (0.0, None), "{name}");
+            assert_eq!(
+                request_cost(&c, tokens(1000, 1000), None),
+                (0.0, None),
+                "{name}"
+            );
         }
         let mut d = openai_config("", "deepseek-v4-flash");
         d.name = "deepseek".into();
@@ -1242,7 +1253,9 @@ mod tests {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/v1/chat/completions"))
-            .and(wiremock::matchers::body_partial_json(serde_json::json!({"max_tokens": 64})))
+            .and(wiremock::matchers::body_partial_json(
+                serde_json::json!({"max_tokens": 64}),
+            ))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
                 "choices": [{"message": {"content": "ok"}}]
             })))
